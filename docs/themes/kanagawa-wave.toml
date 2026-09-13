@@ -1,0 +1,37 @@
+# Kanagawa Wave theme for Tuxedo
+# Original Kanagawa palette: https://github.com/rebelot/kanagawa.nvim
+# Tuxedo theme adaptation by github.com/LibereCode
+
+name = Kanagawa Wave
+
+bg = #1F1F28
+panel = #2A2A37
+border = #54546D
+
+fg = #DCD7BA
+dim = #717C7C
+accent = #658594
+
+cursor = #363646
+selection = #223249
+selected = #223249
+
+statusbar = #2A2A37
+status_fg = #DCD7BA
+mode_fg = #223249
+mode_bg = #7E9CD8
+
+pri_a = #E82424
+pri_b = #FF9E3B
+pri_c = #98BB6C
+pri_d = #7FB4CA
+pri_other = #957FB8
+
+project = #7AA89F
+context = #C0A36E
+
+done = #727169
+matched = #2D4F67
+due = #FF9E3B
+overdue = #E82424
+today = #E82424
