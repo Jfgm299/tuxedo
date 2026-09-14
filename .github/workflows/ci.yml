@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Checkout is all this workflow needs; never grant write from a PR run.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
