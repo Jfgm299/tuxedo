@@ -387,8 +387,10 @@ chord here is ignored rather than bound to a key that could never fire.
 | `yb` | copy current body only (no priority, dates, projects, contexts, `key:value`) |
 | `u` | undo (50 levels) |
 
-Movement preserves the active sort: priority mode requires matching priority and due date, due mode requires matching due date, and file mode allows unrestricted movement.
-Visual selections move in one undoable operation and must be fully visible within one sort tie.
+Movement preserves the active sort: priority mode requires matching priority
+and due date, due mode requires matching due date, and file mode allows
+unrestricted movement. Visual selections move in one undoable operation and
+must be fully visible within one sort tie.
 
 ### Edit dialog
 
@@ -684,6 +686,11 @@ See [github.com/webstonehq/tuxedo/issues](https://github.com/webstonehq/tuxedo/i
 Issues and pull requests are welcome. For larger changes, please open an
 issue first to discuss the approach. Run `mise run preflight` (or the
 plain cargo equivalents described in [Development](#development)) before submitting.
+
+### Use of AI
+
+Go for it, **except** in issue and PR descriptions 🙏. If you don't take the time
+to write, I won't take the time to read and close the issue or PR.
 
 ## License
 
