@@ -677,7 +677,7 @@ plain `cargo` commands if you don't use [mise](https://mise.jdx.dev/).
 
 ## Roadmap
 
-Planned and in-flight work lives in [`todo.txt`](./todo.txt) — eat your own dog food.
+See [github.com/webstonehq/tuxedo/issues](https://github.com/webstonehq/tuxedo/issues).
 
 ## Contributing
 
