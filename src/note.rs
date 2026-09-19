@@ -31,6 +31,22 @@ pub fn notes_dir_from_config(configured: Option<&str>) -> PathBuf {
     PathBuf::from("notes")
 }
 
+/// Extract the relative path from a legacy `note:<path>` token in a task's
+/// raw line, if any. Distinct from the newer `notes:<id>/` folder token:
+/// any token starting with `notes:` is explicitly skipped first, so a task
+/// carrying only a `notes:<id>/` token is never misdetected as also having
+/// a legacy note (in practice `"notes:...".strip_prefix("note:")` already
+/// fails on its own — the character right after `note` is `s`, not `:` —
+/// but the explicit skip keeps that independence obvious rather than
+/// relying on it staying true).
+pub fn legacy_note_rel_from_raw(raw: &str) -> Option<String> {
+    raw.split_whitespace()
+        .filter(|token| !token.starts_with("notes:"))
+        .find_map(|token| token.strip_prefix("note:"))
+        .map(|s| s.trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Extract the id from an existing `notes:<id>/` token in a task's raw
 /// line, if any.
 pub fn notes_id_from_raw(raw: &str) -> Option<String> {
@@ -282,6 +298,31 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn legacy_note_rel_from_raw_finds_legacy_token() {
+        let raw = "Write PR summary +work note:projects/example.md";
+        assert_eq!(
+            legacy_note_rel_from_raw(raw),
+            Some("projects/example.md".to_string())
+        );
+    }
+
+    #[test]
+    fn legacy_note_rel_from_raw_returns_none_when_absent() {
+        let raw = "Write PR summary +work";
+        assert_eq!(legacy_note_rel_from_raw(raw), None);
+    }
+
+    #[test]
+    fn legacy_note_rel_from_raw_does_not_misdetect_a_notes_token_as_legacy() {
+        // A task that already migrated carries only `notes:<id>/`; the
+        // legacy `note:<path>` lookup must never fire on it (this is the
+        // "note:" vs "notes:" prefix-collision case called out in the task
+        // brief — confirmed here rather than assumed).
+        let raw = "Write PR summary +work notes:a1b2c3d4/";
+        assert_eq!(legacy_note_rel_from_raw(raw), None);
     }
 
     #[test]

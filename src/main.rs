@@ -394,20 +394,51 @@ fn handle_share(app: &mut App, _key: KeyEvent) {
     app.mode = Mode::Normal;
 }
 
-/// Notes-list popup: j/k (or the arrows) move the cursor, Esc closes back to
-/// Normal. Read-only for this task — selecting a row does nothing yet; `e`/
-/// `i` opening the file into the embedded editor is wired in a later task.
-/// MVP scope deliberately skips a `gg`/`G` chord here: `app.chord` is a
-/// single shared leader-state machine already loaded with Normal-mode
-/// meanings (`dd`, `yy`, `gg`, `fp`/`fc`/`ff`), and this is a read-only list
-/// with no urgent need for jump-to-top/bottom, so plain up/down keeps this
-/// slice small; chord support can follow alongside the create/rename/delete
-/// actions in later tasks if it turns out to be missed.
+/// Notes-list popup: j/k (or the arrows) move the cursor, `n` starts an
+/// inline "new note name" prompt, Esc closes back to Normal. Selecting a row
+/// to open it does nothing yet; `e`/`i` opening the file into the embedded
+/// editor is wired in a later task. MVP scope deliberately skips a `gg`/`G`
+/// chord here: `app.chord` is a single shared leader-state machine already
+/// loaded with Normal-mode meanings (`dd`, `yy`, `gg`, `fp`/`fc`/`ff`), and
+/// this is a small list with no urgent need for jump-to-top/bottom, so plain
+/// up/down keeps this slice small; chord support can follow alongside the
+/// rename/delete actions in later tasks if it turns out to be missed.
+///
+/// `n` reuses the "new" mnemonic from the main list's `BeginAdd` (`n`), but
+/// this popup owns its own keyspace (per the doc comment on
+/// `src/keybinds.rs`) and never goes through `Action`/`KeyBindings` — the
+/// binding here can't collide with the global `n`.
 fn handle_notes(app: &mut App, key: KeyEvent) {
+    if app.notes_popup.prompt.is_some() {
+        handle_notes_prompt(app, key);
+        return;
+    }
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => app.notes_popup.move_down(),
         KeyCode::Char('k') | KeyCode::Up => app.notes_popup.move_up(),
+        KeyCode::Char('n') => app.begin_new_note_prompt(),
         KeyCode::Esc => app.mode = Mode::Normal,
+        _ => {}
+    }
+}
+
+/// The inline "new note name" prompt nested inside `Mode::Notes` (see the
+/// `prompt: Option<String>` field on `NotesPopupState`). Deliberately a
+/// bespoke minimal text buffer — no cursor movement, no autocomplete, no NL
+/// pre-pass — rather than reusing `app.draft`/`DraftState`: a filename has
+/// none of the todo.txt-line structure `DraftState` exists to manage
+/// (project/context autocomplete, NL rewriting, slash-menu overlays), so
+/// pulling it in would mean carrying that machinery for no benefit. This
+/// mirrors the *shape* of `handle_prompt`'s much lighter `PromptProject`/
+/// `PromptContext` driving loop (Esc/Enter/character-editing only, no
+/// chord/overlay layering) rather than `handle_insert`'s full vim-like
+/// Normal/Insert stack — just without also inheriting `DraftState` itself.
+fn handle_notes_prompt(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => app.cancel_new_note_prompt(),
+        KeyCode::Enter => app.confirm_new_note_prompt(),
+        KeyCode::Backspace => app.notes_popup.prompt_backspace(),
+        KeyCode::Char(c) => app.notes_popup.prompt_push(c),
         _ => {}
     }
 }
@@ -2365,5 +2396,62 @@ mod tests {
 
         handle_notes(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn handle_notes_n_key_opens_prompt_and_esc_cancels_back_to_the_list() {
+        let mut app = build_app();
+        app.mode = Mode::Notes;
+
+        handle_notes(&mut app, key('n'));
+        assert_eq!(app.notes_popup.prompt, Some(String::new()));
+
+        for c in "foo".chars() {
+            handle_notes(&mut app, key(c));
+        }
+        assert_eq!(app.notes_popup.prompt.as_deref(), Some("foo"));
+
+        handle_notes(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            app.notes_popup.prompt, None,
+            "Esc cancels the prompt without creating anything"
+        );
+        assert_eq!(
+            app.mode,
+            Mode::Notes,
+            "Esc from the prompt returns to the list, not Mode::Normal"
+        );
+    }
+
+    #[test]
+    fn handle_notes_prompt_enter_on_empty_input_is_a_noop() {
+        let mut app = build_app();
+        app.mode = Mode::Notes;
+
+        handle_notes(&mut app, key('n'));
+        handle_notes(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(
+            app.notes_popup.prompt,
+            Some(String::new()),
+            "Enter on an empty name must stay in the prompt, not close it"
+        );
+        assert_eq!(app.mode, Mode::Notes);
+    }
+
+    #[test]
+    fn handle_notes_prompt_backspace_removes_last_char() {
+        let mut app = build_app();
+        app.mode = Mode::Notes;
+
+        handle_notes(&mut app, key('n'));
+        handle_notes(&mut app, key('a'));
+        handle_notes(&mut app, key('b'));
+        handle_notes(
+            &mut app,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+
+        assert_eq!(app.notes_popup.prompt.as_deref(), Some("a"));
     }
 }
