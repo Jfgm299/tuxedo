@@ -1,0 +1,64 @@
+//! Floating notes-list popup (`Mode::Notes`). Styled like `dialog::render`'s
+//! bordered box: same border/title chrome, colors pulled from `app.theme()`.
+//! Read-only for this task — lists the current task's `.md` files with the
+//! cursor row highlighted; selecting a file is wired in a later task.
+
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph};
+
+use crate::app::App;
+
+pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = app.theme();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border).bg(theme.panel))
+        .title(Line::from(vec![Span::styled(
+            " NOTES ",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )]))
+        .style(Style::default().bg(theme.panel));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let state = &app.notes_popup;
+    if state.files.is_empty() {
+        let line = Line::from(vec![Span::styled(
+            "  No notes yet",
+            Style::default().fg(theme.dim),
+        )])
+        .style(Style::default().bg(theme.panel));
+        frame.render_widget(
+            Paragraph::new(line).style(Style::default().bg(theme.panel)),
+            inner,
+        );
+        return;
+    }
+
+    let lines: Vec<Line> = state
+        .files
+        .iter()
+        .enumerate()
+        .map(|(i, path)| {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            let is_sel = i == state.cursor;
+            let bg = if is_sel { theme.cursor } else { theme.panel };
+            let style = Style::default().fg(theme.fg).bg(bg);
+            Line::from(vec![Span::styled(format!("  {name}"), style)])
+                .style(Style::default().bg(bg))
+        })
+        .collect();
+
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(theme.panel)),
+        inner,
+    );
+}

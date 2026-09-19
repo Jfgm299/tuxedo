@@ -3,23 +3,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::todo::{self, Task};
 
-pub const DEFAULT_NOTES_SUBDIR: &str = "projects/tuxedo-tasks";
-
 /// Subdirectory of `notes_dir` under which per-task notes folders live:
 /// `notes_dir/tasks/<id>/*.md`.
 pub const NOTES_TASKS_SUBDIR: &str = "tasks";
-
-/// Legacy single-file note target, resolved from a `note:<path>` token.
-///
-/// Kept for the existing `note:<path>` call sites in `src/app/mutations.rs`
-/// (rewired in a later task); new code should use [`folder_for_task`]
-/// instead.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NoteTarget {
-    pub rel: String,
-    pub path: PathBuf,
-    pub existed_in_task: bool,
-}
 
 /// A resolved notes folder for a task.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,37 +29,6 @@ pub fn notes_dir_from_config(configured: Option<&str>) -> PathBuf {
         return PathBuf::from(home).join("notes");
     }
     PathBuf::from("notes")
-}
-
-pub fn target_for_task(task: &Task, notes_dir: &Path) -> NoteTarget {
-    if let Some(rel) = legacy_note_rel_from_raw(&task.raw) {
-        let path = path_for_rel(notes_dir, &rel);
-        return NoteTarget {
-            rel,
-            path,
-            existed_in_task: true,
-        };
-    }
-
-    let title = todo::body_only(&task.raw);
-    let slug = slugify(if title.is_empty() { "task" } else { &title });
-    let rel = format!("{DEFAULT_NOTES_SUBDIR}/{slug}.md");
-    let path = notes_dir.join(&rel);
-    NoteTarget {
-        rel,
-        path,
-        existed_in_task: false,
-    }
-}
-
-/// Extract a legacy `note:<path>` token from a task's raw line, if any.
-/// Needed only for migrating pre-existing single-file notes into the new
-/// `notes:<id>/` folder model.
-pub fn legacy_note_rel_from_raw(raw: &str) -> Option<String> {
-    raw.split_whitespace()
-        .find_map(|token| token.strip_prefix("note:"))
-        .map(|s| s.trim_matches('"').to_string())
-        .filter(|s| !s.is_empty())
 }
 
 /// Extract the id from an existing `notes:<id>/` token in a task's raw
@@ -272,57 +227,12 @@ fn expand_note_dir(value: &str) -> PathBuf {
     PathBuf::from(value)
 }
 
-fn path_for_rel(notes_dir: &Path, rel: &str) -> PathBuf {
-    let path = Path::new(rel);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        notes_dir.join(path)
-    }
-}
-
 fn kv_from_raw(raw: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}:");
     raw.split_whitespace()
         .find_map(|token| token.strip_prefix(&prefix))
         .map(str::to_string)
         .filter(|s| !s.is_empty())
-}
-
-fn slugify(s: &str) -> String {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for ch in s.chars() {
-        let folded = fold_char(ch);
-        for folded_ch in folded.chars() {
-            if folded_ch.is_ascii_alphanumeric() {
-                out.push(folded_ch.to_ascii_lowercase());
-                last_dash = false;
-            } else if !last_dash {
-                out.push('-');
-                last_dash = true;
-            }
-        }
-    }
-    let trimmed = out.trim_matches('-').to_string();
-    if trimmed.is_empty() {
-        "task".to_string()
-    } else {
-        trimmed
-    }
-}
-
-fn fold_char(c: char) -> String {
-    match c {
-        'á' | 'à' | 'ã' | 'â' | 'ä' | 'Á' | 'À' | 'Ã' | 'Â' | 'Ä' => "a".into(),
-        'é' | 'è' | 'ê' | 'ë' | 'É' | 'È' | 'Ê' | 'Ë' => "e".into(),
-        'í' | 'ì' | 'î' | 'ï' | 'Í' | 'Ì' | 'Î' | 'Ï' => "i".into(),
-        'ó' | 'ò' | 'õ' | 'ô' | 'ö' | 'Ó' | 'Ò' | 'Õ' | 'Ô' | 'Ö' => "o".into(),
-        'ú' | 'ù' | 'û' | 'ü' | 'Ú' | 'Ù' | 'Û' | 'Ü' => "u".into(),
-        'ç' | 'Ç' => "c".into(),
-        'ñ' | 'Ñ' => "n".into(),
-        _ => c.to_string(),
-    }
 }
 
 #[cfg(test)]
@@ -344,37 +254,6 @@ mod tests {
         };
         let dir = notes_dir_from_config(Some("~/notes-work"));
         assert_eq!(dir, PathBuf::from(home).join("notes-work"));
-    }
-
-    #[test]
-    fn uses_existing_unquoted_note_token_relative_to_notes_dir() {
-        let task = parse_line("Do thing +Proj @ctx note:projects/clickup-tasks/86abc.md").unwrap();
-        let target = target_for_task(&task, Path::new("/home/me/notes"));
-
-        assert_eq!(target.rel, "projects/clickup-tasks/86abc.md");
-        assert_eq!(
-            target.path,
-            PathBuf::from("/home/me/notes/projects/clickup-tasks/86abc.md")
-        );
-        assert!(target.existed_in_task);
-    }
-
-    #[test]
-    fn creates_default_slug_path_when_task_has_no_note_token() {
-        let task = parse_line("(A) 2026-06-25 Reformular relatório diário/eventos para Slack +Event_Graphs @charlie due:2026-06-30").unwrap();
-        let target = target_for_task(&task, Path::new("/home/me/notes"));
-
-        assert_eq!(
-            target.rel,
-            "projects/tuxedo-tasks/reformular-relatorio-diario-eventos-para-slack.md"
-        );
-        assert_eq!(
-            target.path,
-            PathBuf::from(
-                "/home/me/notes/projects/tuxedo-tasks/reformular-relatorio-diario-eventos-para-slack.md"
-            )
-        );
-        assert!(!target.existed_in_task);
     }
 
     #[test]
@@ -415,21 +294,6 @@ mod tests {
     fn notes_id_from_raw_returns_none_when_absent() {
         let raw = "Write PR summary +work";
         assert_eq!(notes_id_from_raw(raw), None);
-    }
-
-    #[test]
-    fn legacy_note_rel_from_raw_finds_legacy_token() {
-        let raw = "Write PR summary +work note:projects/example.md";
-        assert_eq!(
-            legacy_note_rel_from_raw(raw),
-            Some("projects/example.md".to_string())
-        );
-    }
-
-    #[test]
-    fn legacy_note_rel_from_raw_returns_none_when_absent() {
-        let raw = "Write PR summary +work notes:a1b2c3d4/";
-        assert_eq!(legacy_note_rel_from_raw(raw), None);
     }
 
     #[test]

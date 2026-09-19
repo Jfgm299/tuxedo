@@ -51,8 +51,10 @@ pub enum Action {
     ToggleShowFuture,
     CopyLine,
     CopyBody,
-    OpenNote,
-    CreateOrOpenNote,
+    /// Open the floating notes popup for the current task, listing the
+    /// `.md` files in its `notes:<id>/` folder (default key `o`). Replaces
+    /// the old single-file `OpenNote`/`CreateOrOpenNote` pair.
+    OpenNotes,
     EscapeStack,
     /// Open the phone-capture overlay (QR + URL). First invocation lazily
     /// binds the HTTP server; subsequent invocations just re-show the
@@ -110,8 +112,7 @@ impl Action {
             "toggle_show_future" => Some(Self::ToggleShowFuture),
             "copy_line" => Some(Self::CopyLine),
             "copy_body" => Some(Self::CopyBody),
-            "open_note" | "note" => Some(Self::OpenNote),
-            "create_or_open_note" | "create_note" => Some(Self::CreateOrOpenNote),
+            "open_notes" | "notes" => Some(Self::OpenNotes),
             "escape_stack" | "escape" => Some(Self::EscapeStack),
             "open_share" | "share" => Some(Self::OpenShare),
             "open_theme_picker" | "theme_picker" => Some(Self::OpenThemePicker),
@@ -210,20 +211,20 @@ mod tests {
     }
 
     #[test]
-    fn open_note_is_rebindable() {
+    fn open_notes_is_rebindable() {
         assert_eq!(
-            Action::from_keybind_name("open_note"),
-            Some(Action::OpenNote)
+            Action::from_keybind_name("open_notes"),
+            Some(Action::OpenNotes)
         );
-        assert_eq!(Action::from_keybind_name("note"), Some(Action::OpenNote));
-        assert_eq!(
-            Action::from_keybind_name("create_or_open_note"),
-            Some(Action::CreateOrOpenNote)
-        );
-        assert_eq!(
-            Action::from_keybind_name("create_note"),
-            Some(Action::CreateOrOpenNote)
-        );
+        assert_eq!(Action::from_keybind_name("notes"), Some(Action::OpenNotes));
+    }
+
+    #[test]
+    fn removed_single_file_note_names_no_longer_resolve() {
+        assert_eq!(Action::from_keybind_name("open_note"), None);
+        assert_eq!(Action::from_keybind_name("note"), None);
+        assert_eq!(Action::from_keybind_name("create_or_open_note"), None);
+        assert_eq!(Action::from_keybind_name("create_note"), None);
     }
 
     #[test]

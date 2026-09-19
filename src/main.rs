@@ -352,6 +352,7 @@ fn handle_key(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) {
         Mode::PickTheme => handle_pick_theme(app, key),
         Mode::CommandPalette => handle_command_palette(app, key),
         Mode::Share => handle_share(app, key),
+        Mode::Notes => handle_notes(app, key),
         Mode::Welcome => handle_welcome(app, key),
         Mode::Normal | Mode::Visual => handle_normal(app, key, keybinds),
     }
@@ -391,6 +392,24 @@ fn handle_welcome(app: &mut App, key: KeyEvent) {
 /// same QR without rebinding.
 fn handle_share(app: &mut App, _key: KeyEvent) {
     app.mode = Mode::Normal;
+}
+
+/// Notes-list popup: j/k (or the arrows) move the cursor, Esc closes back to
+/// Normal. Read-only for this task — selecting a row does nothing yet; `e`/
+/// `i` opening the file into the embedded editor is wired in a later task.
+/// MVP scope deliberately skips a `gg`/`G` chord here: `app.chord` is a
+/// single shared leader-state machine already loaded with Normal-mode
+/// meanings (`dd`, `yy`, `gg`, `fp`/`fc`/`ff`), and this is a read-only list
+/// with no urgent need for jump-to-top/bottom, so plain up/down keeps this
+/// slice small; chord support can follow alongside the create/rename/delete
+/// actions in later tasks if it turns out to be missed.
+fn handle_notes(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.notes_popup.move_down(),
+        KeyCode::Char('k') | KeyCode::Up => app.notes_popup.move_up(),
+        KeyCode::Esc => app.mode = Mode::Normal,
+        _ => {}
+    }
 }
 
 /// What the draft buffer changed (or didn't) in response to a key. Lets
@@ -1034,8 +1053,7 @@ fn resolve_normal_key(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) -> O
         KeyCode::Char('l') => Action::GoList,
         KeyCode::Char('e') => Action::BeginEdit,
         KeyCode::Char('i') => Action::BeginEditInsert,
-        KeyCode::Char('o') => Action::OpenNote,
-        KeyCode::Char('O') => Action::CreateOrOpenNote,
+        KeyCode::Char('o') => Action::OpenNotes,
         KeyCode::Char('x') => Action::ToggleComplete,
         // 'dd' chord. First press arms; second fires.
         KeyCode::Char('d') if app.chord.toggle('d') => Action::Delete,
@@ -1310,8 +1328,7 @@ fn apply_action(app: &mut App, action: Action) {
         }
         Action::CopyLine => copy_current_task(app, false),
         Action::CopyBody => copy_current_task(app, true),
-        Action::OpenNote => app.open_note_for_current(),
-        Action::CreateOrOpenNote => app.create_or_open_note_for_current(),
+        Action::OpenNotes => app.open_notes_for_current(),
         Action::OpenShare => match app.ensure_share_started() {
             Ok(_) => {
                 app.mode = Mode::Share;
@@ -2314,5 +2331,39 @@ mod tests {
         app.set_search("abc".into());
         handle_search(&mut app, ctrl('u'));
         assert_eq!(app.draft.text(), "");
+    }
+
+    #[test]
+    fn lowercase_o_resolves_to_open_notes_and_capital_o_is_freed() {
+        let mut app = build_app();
+        assert_eq!(resolve(&mut app, key('o')), Some(Action::OpenNotes));
+        // `O` used to be CreateOrOpenNote; it is freed and now resolves to
+        // nothing built-in.
+        assert_eq!(resolve(&mut app, key('O')), None);
+    }
+
+    #[test]
+    fn open_notes_action_enters_notes_mode() {
+        let mut app = build_app();
+        apply_action(&mut app, Action::OpenNotes);
+        assert_eq!(app.mode, Mode::Notes);
+    }
+
+    #[test]
+    fn handle_notes_up_down_moves_cursor_and_esc_returns_to_normal() {
+        let mut app = build_app();
+        app.notes_popup = tuxedo::app::NotesPopupState::new(vec![
+            std::path::PathBuf::from("a.md"),
+            std::path::PathBuf::from("b.md"),
+        ]);
+        app.mode = Mode::Notes;
+
+        handle_notes(&mut app, key('j'));
+        assert_eq!(app.notes_popup.cursor, 1);
+        handle_notes(&mut app, key('k'));
+        assert_eq!(app.notes_popup.cursor, 0);
+
+        handle_notes(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.mode, Mode::Normal);
     }
 }

@@ -19,6 +19,7 @@ mod draft;
 mod draft_overlay;
 mod flash;
 mod mutations;
+mod notes_popup;
 pub mod palette;
 mod picker;
 mod prefs;
@@ -42,6 +43,7 @@ pub use draft_overlay::{
     format_rec_value, recurrence_next_preview,
 };
 pub use flash::Flash;
+pub use notes_popup::NotesPopupState;
 pub use palette::CommandPaletteState;
 pub use prefs::{Layout, Prefs};
 pub use selection::Selection;
@@ -152,8 +154,15 @@ pub struct App {
     /// Base directory used by note actions. Relative `note:<path>` tokens are
     /// resolved under this directory, and generated notes are created below it.
     pub(crate) notes_dir: PathBuf,
+    /// State for the floating notes-list popup (`Mode::Notes`): the current
+    /// task's `.md` files and the list cursor. Re-seeded every time
+    /// `open_notes_for_current` runs.
+    pub notes_popup: NotesPopupState,
     /// Path queued for opening in the user's editor after the TUI temporarily
-    /// restores the terminal. Set by OpenNote and drained by the run loop.
+    /// restores the terminal, drained by the run loop. Nothing currently
+    /// populates this (the old single-file note flow that did was replaced
+    /// by the read-only notes popup); kept for now as it may still be useful
+    /// once a later task wires an "open in $EDITOR" fallback.
     pending_editor_path: Option<PathBuf>,
     /// Theme index captured when the theme picker opened, so cancel
     /// can restore it.
@@ -217,6 +226,7 @@ impl App {
             view_scroll: [Cell::new(0), Cell::new(0)],
             share: None,
             notes_dir: note_dir,
+            notes_popup: NotesPopupState::default(),
             pending_editor_path: None,
             theme_pick_orig: 0,
             week_start: WeekStart::Sunday,

@@ -47,6 +47,12 @@ pub enum Mode {
     /// target and no `./todo.txt` exists. `c` creates `./todo.txt`, `s`
     /// opens the bundled sample, `q`/`Esc` quits without creating anything.
     Welcome,
+    /// Floating notes-list popup for the current task (`o`), styled like the
+    /// "ADD TASK" dialog. Read-only for now: lists the task's `.md` files
+    /// (`App::notes_popup` holds the list + cursor), navigable with j/k,
+    /// closed with Esc. Selecting a file to actually open is wired in a
+    /// later task.
+    Notes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

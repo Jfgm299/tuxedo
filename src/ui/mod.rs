@@ -16,6 +16,7 @@ pub mod help;
 pub mod hyperlinks;
 pub mod list;
 pub mod logo;
+pub mod notes_popup;
 pub mod settings;
 pub mod share;
 pub mod status;
@@ -158,6 +159,17 @@ pub fn draw(frame: &mut Frame, app: &App) {
             let r = centered_in(area, w, h);
             frame.render_widget(Clear, r);
             share::render(frame, r, app);
+        }
+        Mode::Notes => {
+            // Styled like the ADD TASK dialog (same width formula, sized a
+            // bit taller to fit a scrollable list).
+            let dlg_w: u16 = (u32::from(center_area.width) * 4 / 5)
+                .clamp(u32::from(DIALOG_MIN_W), u32::from(DIALOG_MAX_W))
+                as u16;
+            let dlg_h: u16 = (DIALOG_H + 4).min(area.height.saturating_sub(2));
+            let r = centered_in(area, dlg_w, dlg_h);
+            frame.render_widget(Clear, r);
+            notes_popup::render(frame, r, app);
         }
         Mode::PickTheme => {
             let h: u16 = area.height.saturating_sub(4).min(PALETTE_MAX_H);

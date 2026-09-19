@@ -78,14 +78,9 @@ pub const ENTRIES: &[PaletteEntry] = &[
         action: Action::CopyBody,
     },
     PaletteEntry {
-        label: "open task note",
+        label: "open task notes",
         keys: "o",
-        action: Action::OpenNote,
-    },
-    PaletteEntry {
-        label: "create or open task note",
-        keys: "O",
-        action: Action::CreateOrOpenNote,
+        action: Action::OpenNotes,
     },
     PaletteEntry {
         label: "undo",
@@ -555,6 +550,7 @@ mod tests {
             Action::ToggleShowFuture,
             Action::CopyLine,
             Action::CopyBody,
+            Action::OpenNotes,
             Action::EscapeStack,
             Action::OpenShare,
             Action::OpenThemePicker,
