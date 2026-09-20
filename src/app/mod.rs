@@ -43,7 +43,7 @@ pub use draft_overlay::{
     format_rec_value, recurrence_next_preview,
 };
 pub use flash::Flash;
-pub use notes_popup::NotesPopupState;
+pub use notes_popup::{NotePromptKind, NotesPopupState};
 pub use palette::CommandPaletteState;
 pub use prefs::{Layout, Prefs};
 pub use selection::Selection;

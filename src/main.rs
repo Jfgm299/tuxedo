@@ -395,50 +395,72 @@ fn handle_share(app: &mut App, _key: KeyEvent) {
 }
 
 /// Notes-list popup: j/k (or the arrows) move the cursor, `n` starts an
-/// inline "new note name" prompt, Esc closes back to Normal. Selecting a row
-/// to open it does nothing yet; `e`/`i` opening the file into the embedded
+/// inline "new note name" prompt, `r` renames the selected row (same inline
+/// prompt, pre-filled), `d` opens a delete-confirmation sub-state, `u`
+/// unlinks the selected row, Esc closes back to Normal. Selecting a row to
+/// open it does nothing yet; `e`/`i` opening the file into the embedded
 /// editor is wired in a later task. MVP scope deliberately skips a `gg`/`G`
 /// chord here: `app.chord` is a single shared leader-state machine already
 /// loaded with Normal-mode meanings (`dd`, `yy`, `gg`, `fp`/`fc`/`ff`), and
 /// this is a small list with no urgent need for jump-to-top/bottom, so plain
-/// up/down keeps this slice small; chord support can follow alongside the
-/// rename/delete actions in later tasks if it turns out to be missed.
+/// up/down keeps this slice small.
 ///
-/// `n` reuses the "new" mnemonic from the main list's `BeginAdd` (`n`), but
-/// this popup owns its own keyspace (per the doc comment on
-/// `src/keybinds.rs`) and never goes through `Action`/`KeyBindings` — the
-/// binding here can't collide with the global `n`.
+/// `n`/`r`/`d`/`u` reuse mnemonics from elsewhere in the app (`n` from the
+/// main list's `BeginAdd`, `d` from `dd`'s delete), but this popup owns its
+/// own keyspace (per the doc comment on `src/keybinds.rs`) and never goes
+/// through `Action`/`KeyBindings` — none of these bindings can collide with
+/// the global versions.
 fn handle_notes(app: &mut App, key: KeyEvent) {
     if app.notes_popup.prompt.is_some() {
         handle_notes_prompt(app, key);
+        return;
+    }
+    if app.notes_popup.pending_delete.is_some() {
+        handle_notes_delete_confirm(app, key);
         return;
     }
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => app.notes_popup.move_down(),
         KeyCode::Char('k') | KeyCode::Up => app.notes_popup.move_up(),
         KeyCode::Char('n') => app.begin_new_note_prompt(),
+        KeyCode::Char('r') => app.begin_rename_prompt(),
+        KeyCode::Char('d') => app.begin_delete_note_confirm(),
+        KeyCode::Char('u') => app.unlink_selected_note(),
         KeyCode::Esc => app.mode = Mode::Normal,
         _ => {}
     }
 }
 
-/// The inline "new note name" prompt nested inside `Mode::Notes` (see the
-/// `prompt: Option<String>` field on `NotesPopupState`). Deliberately a
-/// bespoke minimal text buffer — no cursor movement, no autocomplete, no NL
-/// pre-pass — rather than reusing `app.draft`/`DraftState`: a filename has
-/// none of the todo.txt-line structure `DraftState` exists to manage
-/// (project/context autocomplete, NL rewriting, slash-menu overlays), so
-/// pulling it in would mean carrying that machinery for no benefit. This
-/// mirrors the *shape* of `handle_prompt`'s much lighter `PromptProject`/
-/// `PromptContext` driving loop (Esc/Enter/character-editing only, no
-/// chord/overlay layering) rather than `handle_insert`'s full vim-like
-/// Normal/Insert stack — just without also inheriting `DraftState` itself.
+/// The inline text prompt nested inside `Mode::Notes` — shared by create and
+/// rename (see `NotePromptKind`/`prompt: Option<String>` on
+/// `NotesPopupState`). Deliberately a bespoke minimal text buffer — no
+/// cursor movement, no autocomplete, no NL pre-pass — rather than reusing
+/// `app.draft`/`DraftState`: a filename has none of the todo.txt-line
+/// structure `DraftState` exists to manage (project/context autocomplete, NL
+/// rewriting, slash-menu overlays), so pulling it in would mean carrying
+/// that machinery for no benefit. This mirrors the *shape* of
+/// `handle_prompt`'s much lighter `PromptProject`/`PromptContext` driving
+/// loop (Esc/Enter/character-editing only, no chord/overlay layering) rather
+/// than `handle_insert`'s full vim-like Normal/Insert stack — just without
+/// also inheriting `DraftState` itself.
 fn handle_notes_prompt(app: &mut App, key: KeyEvent) {
     match key.code {
-        KeyCode::Esc => app.cancel_new_note_prompt(),
-        KeyCode::Enter => app.confirm_new_note_prompt(),
+        KeyCode::Esc => app.cancel_note_prompt(),
+        KeyCode::Enter => app.confirm_note_prompt(),
         KeyCode::Backspace => app.notes_popup.prompt_backspace(),
         KeyCode::Char(c) => app.notes_popup.prompt_push(c),
+        _ => {}
+    }
+}
+
+/// The delete-confirmation sub-state nested inside `Mode::Notes` (see
+/// `pending_delete: Option<usize>` on `NotesPopupState`): `y`/Enter deletes,
+/// `n`/Esc cancels back to browsing. Any other key is ignored so a stray
+/// press can't accidentally confirm or cancel.
+fn handle_notes_delete_confirm(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Enter => app.confirm_delete_note(),
+        KeyCode::Char('n') | KeyCode::Esc => app.cancel_delete_note_confirm(),
         _ => {}
     }
 }
@@ -2453,5 +2475,157 @@ mod tests {
         );
 
         assert_eq!(app.notes_popup.prompt.as_deref(), Some("a"));
+    }
+
+    /// Builds an `App` with a real `notes_dir` and a task already carrying a
+    /// `notes:<id>/` token pointing at a folder with two `.md` files, then
+    /// opens the notes popup — mirrors `app_with_two_notes` in
+    /// `src/app/notes_popup.rs`'s own test module, but built from `App::new`
+    /// directly since `main.rs`'s test module (a separate crate) can't reach
+    /// that lib-internal `pub(crate)` test helper.
+    fn build_notes_app_with_two_files(dir: &std::path::Path) -> App {
+        let notes_folder = dir.join("tasks").join("abc123");
+        std::fs::create_dir_all(&notes_folder).expect("create notes folder");
+        std::fs::write(notes_folder.join("a.md"), "content a").expect("write a.md");
+        std::fs::write(notes_folder.join("b.md"), "content b").expect("write b.md");
+        let path = std::env::temp_dir().join(format!(
+            "tuxedo-notes-{}-{:?}.txt",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let raw = "Write PR summary +work notes:abc123/\n";
+        std::fs::write(&path, raw).expect("write todo.txt");
+        let cfg = Config {
+            notes_dir: Some(dir.to_string_lossy().into_owned()),
+            ..Config::default()
+        };
+        let mut app = App::new(path, raw.into(), "2026-05-07".into(), cfg);
+        app.open_notes_for_current();
+        app
+    }
+
+    #[test]
+    fn handle_notes_r_key_opens_rename_prompt_prefilled_with_current_name() {
+        let mut app = build_app();
+        app.notes_popup = tuxedo::app::NotesPopupState::new(vec![
+            std::path::PathBuf::from("foo.md"),
+            std::path::PathBuf::from("bar.md"),
+        ]);
+        app.mode = Mode::Notes;
+
+        handle_notes(&mut app, key('r'));
+
+        assert_eq!(app.notes_popup.prompt.as_deref(), Some("foo.md"));
+        assert_eq!(app.mode, Mode::Notes);
+    }
+
+    #[test]
+    fn handle_notes_d_key_opens_delete_confirm_and_n_returns_to_browsing() {
+        let mut app = build_app();
+        app.notes_popup = tuxedo::app::NotesPopupState::new(vec![
+            std::path::PathBuf::from("foo.md"),
+            std::path::PathBuf::from("bar.md"),
+        ]);
+        app.mode = Mode::Notes;
+
+        handle_notes(&mut app, key('d'));
+        assert_eq!(app.notes_popup.pending_delete, Some(0));
+
+        handle_notes(&mut app, key('n'));
+        assert!(app.notes_popup.pending_delete.is_none());
+
+        // Not stuck in the confirm state: ordinary browsing keys work again.
+        handle_notes(&mut app, key('j'));
+        assert_eq!(app.notes_popup.cursor, 1);
+    }
+
+    #[test]
+    fn handle_notes_d_key_on_empty_list_does_not_enter_confirm_state() {
+        let mut app = build_app();
+        app.notes_popup = tuxedo::app::NotesPopupState::default();
+        app.mode = Mode::Notes;
+
+        handle_notes(&mut app, key('d'));
+
+        assert!(app.notes_popup.pending_delete.is_none());
+        assert_eq!(app.mode, Mode::Notes);
+    }
+
+    #[test]
+    fn handle_notes_delete_confirm_y_deletes_selected_file_and_refreshes_list() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-delete-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        handle_notes(&mut app, key('d'));
+        handle_notes(&mut app, key('y'));
+
+        assert!(!notes_folder.join("a.md").exists());
+        assert_eq!(app.notes_popup.files, vec![notes_folder.join("b.md")]);
+        assert!(app.notes_popup.pending_delete.is_none());
+        assert_eq!(app.mode, Mode::Notes);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_notes_u_key_unlinks_selected_file_into_unlinked_dir() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-unlink-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        handle_notes(&mut app, key('u'));
+
+        assert!(!notes_folder.join("a.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("unlinked").join("a.md")).expect("unlinked file"),
+            "content a"
+        );
+        assert_eq!(app.notes_popup.files, vec![notes_folder.join("b.md")]);
+        assert_eq!(app.mode, Mode::Notes, "u never leaves the popup");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_notes_rename_prompt_enter_renames_file_via_full_key_routing() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-rename-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        handle_notes(&mut app, key('r'));
+        assert_eq!(app.notes_popup.prompt.as_deref(), Some("a.md"));
+        for _ in 0..5 {
+            handle_notes(
+                &mut app,
+                KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+            );
+        }
+        for c in "renamed".chars() {
+            handle_notes(&mut app, key(c));
+        }
+        handle_notes(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(!notes_folder.join("a.md").exists());
+        assert!(notes_folder.join("renamed.md").exists());
+        assert!(app.notes_popup.prompt.is_none());
+        assert_eq!(app.mode, Mode::Notes);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

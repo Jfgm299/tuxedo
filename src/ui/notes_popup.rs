@@ -1,8 +1,9 @@
 //! Floating notes-list popup (`Mode::Notes`). Styled like `dialog::render`'s
 //! bordered box: same border/title chrome, colors pulled from `app.theme()`.
 //! Lists the current task's `.md` files with the cursor row highlighted;
-//! `n` opens an inline "new note name" prompt in place of the list.
-//! Selecting a file to open is wired in a later task.
+//! `n`/`r` open an inline name prompt (create/rename) in place of the list,
+//! `d` opens an inline "Delete <name>? (y/n)" confirmation in place of the
+//! list. Selecting a file to open is wired in a later task.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -10,7 +11,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::App;
+use crate::app::{App, NotePromptKind};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme();
@@ -29,11 +30,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let state = &app.notes_popup;
     if let Some(input) = &state.prompt {
+        let label = match state.prompt_kind {
+            Some(NotePromptKind::Rename { .. }) => "  Rename note (.md added automatically)",
+            _ => "  New note name (.md added automatically)",
+        };
         let lines = vec![
-            Line::from(vec![Span::styled(
-                "  New note name (.md added automatically)",
-                Style::default().fg(theme.dim),
-            )]),
+            Line::from(vec![Span::styled(label, Style::default().fg(theme.dim))]),
             Line::from(vec![Span::styled(
                 format!("  > {input}"),
                 Style::default().fg(theme.fg),
@@ -41,6 +43,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         ];
         frame.render_widget(
             Paragraph::new(lines).style(Style::default().bg(theme.panel)),
+            inner,
+        );
+        return;
+    }
+
+    if let Some(index) = state.pending_delete {
+        let name = state
+            .files
+            .get(index)
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let line = Line::from(vec![Span::styled(
+            format!("  Delete {name}? (y/n)"),
+            Style::default()
+                .fg(theme.overdue)
+                .add_modifier(Modifier::BOLD),
+        )]);
+        frame.render_widget(
+            Paragraph::new(line).style(Style::default().bg(theme.panel)),
             inner,
         );
         return;

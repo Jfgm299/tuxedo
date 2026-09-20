@@ -122,13 +122,50 @@ pub fn migrate_legacy_note(old_path: &Path, new_dir: &Path) -> std::io::Result<P
         )
     })?;
     let new_path = new_dir.join(file_name);
-    if std::fs::rename(old_path, &new_path).is_err() {
-        // Fall back to copy+remove, e.g. when old_path and new_dir live on
-        // different filesystems/devices and rename(2) can't do it in place.
-        std::fs::copy(old_path, &new_path)?;
+    move_file(old_path, &new_path)?;
+    Ok(new_path)
+}
+
+/// Subdirectory of `notes_dir` that holds "unlinked" notes: files moved out
+/// of a task's own `notes_dir/tasks/<id>/` folder (which is exclusively that
+/// task's notes) so they stop appearing in that task's list, without
+/// deleting their content.
+pub const NOTES_UNLINKED_SUBDIR: &str = "unlinked";
+
+/// Unlink a note from its task: move it out of the task's notes folder into
+/// the shared `notes_dir/unlinked/` directory (created if needed), so it no
+/// longer shows up in that task's list but its content survives on disk.
+/// Distinct from `migrate_legacy_note` (which always keeps the same
+/// filename and always targets a brand-new per-task folder): here the
+/// destination is a single shared directory every task's unlinks land in,
+/// so a plain same-filename move risks silently clobbering an unrelated
+/// task's already-unlinked file of the same name. If `notes_dir/unlinked/`
+/// already has a file with this name, the moved file is renamed to
+/// `<task_id>-<original-filename>` so neither file is lost.
+pub fn unlink_note(path: &Path, notes_dir: &Path, task_id: &str) -> std::io::Result<PathBuf> {
+    let unlinked_dir = notes_dir.join(NOTES_UNLINKED_SUBDIR);
+    std::fs::create_dir_all(&unlinked_dir)?;
+    let file_name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
+    })?;
+    let mut target = unlinked_dir.join(file_name);
+    if target.exists() {
+        target = unlinked_dir.join(format!("{task_id}-{}", file_name.to_string_lossy()));
+    }
+    move_file(path, &target)?;
+    Ok(target)
+}
+
+/// Move a file, falling back to copy+remove when a plain rename fails (e.g.
+/// `old_path` and `new_path` live on different filesystems/devices and
+/// `rename(2)` can't do it in place). Shared by `migrate_legacy_note` and
+/// `unlink_note`, which differ only in how they pick `new_path`.
+fn move_file(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
+    if std::fs::rename(old_path, new_path).is_err() {
+        std::fs::copy(old_path, new_path)?;
         std::fs::remove_file(old_path)?;
     }
-    Ok(new_path)
+    Ok(())
 }
 
 fn folder_path_for_id(notes_dir: &Path, id: &str) -> PathBuf {
@@ -411,6 +448,48 @@ mod tests {
             std::fs::read_to_string(&new_path).unwrap(),
             "legacy content"
         );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn unlink_note_moves_file_into_unlinked_dir_with_identical_content() {
+        let base = unique_temp_dir("unlink");
+        let task_dir = base.join("tasks").join("abc123");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        let path = task_dir.join("foo.md");
+        std::fs::write(&path, "unlink me").unwrap();
+
+        let new_path = unlink_note(&path, &base, "abc123").unwrap();
+
+        assert_eq!(new_path, base.join("unlinked").join("foo.md"));
+        assert!(!path.exists(), "file must be moved out of the task folder");
+        assert_eq!(std::fs::read_to_string(&new_path).unwrap(), "unlink me");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn unlink_note_prefixes_with_task_id_on_name_collision() {
+        let base = unique_temp_dir("unlink-collision");
+        let unlinked_dir = base.join("unlinked");
+        std::fs::create_dir_all(&unlinked_dir).unwrap();
+        std::fs::write(unlinked_dir.join("foo.md"), "already unlinked").unwrap();
+
+        let task_dir = base.join("tasks").join("def456");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        let path = task_dir.join("foo.md");
+        std::fs::write(&path, "second unlink").unwrap();
+
+        let new_path = unlink_note(&path, &base, "def456").unwrap();
+
+        assert_eq!(new_path, unlinked_dir.join("def456-foo.md"));
+        assert_eq!(
+            std::fs::read_to_string(unlinked_dir.join("foo.md")).unwrap(),
+            "already unlinked",
+            "the pre-existing unlinked file must be untouched"
+        );
+        assert_eq!(std::fs::read_to_string(&new_path).unwrap(), "second unlink");
 
         let _ = std::fs::remove_dir_all(&base);
     }

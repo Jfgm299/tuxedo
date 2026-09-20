@@ -1,10 +1,7 @@
-//! State for the read-only notes-list popup (`Mode::Notes`).
-//!
-//! Scope for this task is read-only: list the current task's `.md` files
-//! (resolved via `note::folder_for_task`/`note::list_notes`) and let the user
-//! move a cursor through them. Selecting a file does nothing yet — wiring
-//! `e`/`i` to actually open a file into the embedded editor is a later task
-//! (T4+ in `odd/tasks/notes-popup.md`).
+//! State for the notes-list popup (`Mode::Notes`): browsing, create, rename,
+//! delete (with confirmation) and unlink, all acting on the row currently
+//! selected in the list. Selecting a file to open into the embedded editor
+//! is wired in a later task (T6+ in `odd/tasks/notes-popup.md`).
 
 use std::path::PathBuf;
 
@@ -12,6 +9,21 @@ use super::App;
 use super::types::{Mode, View};
 use crate::core::EditOutcome;
 use crate::note;
+
+/// What the inline text prompt on `NotesPopupState` is currently for. Paired
+/// with the `prompt: Option<String>` buffer (rather than folded into a
+/// single `Option<enum-with-buffer>`) so the many existing call sites and
+/// tests that only care about the buffer's presence/content don't need to
+/// reach through an extra layer — `prompt` and `prompt_kind` are always
+/// `Some`/`None` together, kept in sync by `begin_prompt`/`cancel_prompt`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotePromptKind {
+    /// Prompting for a brand-new note's name (`n`).
+    Create,
+    /// Prompting for a new name for the file at this index into `files`
+    /// (`r`), pre-filled with its current filename.
+    Rename { index: usize },
+}
 
 /// Bespoke list-cursor state, following the same hand-rolled idiom used by
 /// the rest of the app's pickers (there is no shared list component to
@@ -38,9 +50,16 @@ pub struct NotesPopupState {
     /// re-deriving the cursor. `None` in `View::Archive`, matching
     /// `App::cur_task_index_in_tasks`.
     pub task_abs: Option<usize>,
-    /// `Some(buffer)` while the inline "new note name" prompt (`n` from the
-    /// list) is open; `None` while just browsing the list.
+    /// `Some(buffer)` while an inline text prompt (create or rename) is
+    /// open; `None` while just browsing the list. Always `Some`/`None` in
+    /// lockstep with `prompt_kind`.
     pub prompt: Option<String>,
+    /// What `prompt` is for (create vs. rename-at-index). `None` iff
+    /// `prompt` is `None`.
+    pub prompt_kind: Option<NotePromptKind>,
+    /// Index into `files` of the row awaiting delete confirmation ("Delete
+    /// <name>? (y/n)"), or `None` while just browsing the list.
+    pub pending_delete: Option<usize>,
 }
 
 impl NotesPopupState {
@@ -51,6 +70,8 @@ impl NotesPopupState {
             folder: None,
             task_abs: None,
             prompt: None,
+            prompt_kind: None,
+            pending_delete: None,
         }
     }
 
@@ -73,9 +94,35 @@ impl NotesPopupState {
         self.files.get(self.cursor)
     }
 
-    /// Open the inline "new note name" prompt with an empty buffer.
-    pub fn begin_prompt(&mut self) {
-        self.prompt = Some(String::new());
+    /// The cursor's index into `files`, or `None` on an empty list (where
+    /// `cursor` is meaningless — mirrors the doc comment on `cursor`
+    /// itself). Used to gate rename/delete/unlink as no-ops on an empty
+    /// list without each call site re-checking `files.is_empty()`.
+    pub fn selected_index(&self) -> Option<usize> {
+        if self.files.is_empty() {
+            None
+        } else {
+            Some(self.cursor)
+        }
+    }
+
+    /// Clamp `cursor` back into bounds after `files` shrinks (delete/unlink
+    /// refresh), the same way `move_down`/`move_up` already clamp: never
+    /// left pointing past the end of a shrunk list, and reset to `0` if the
+    /// list became empty.
+    pub fn clamp_cursor(&mut self) {
+        if self.files.is_empty() {
+            self.cursor = 0;
+        } else if self.cursor >= self.files.len() {
+            self.cursor = self.files.len() - 1;
+        }
+    }
+
+    /// Open an inline text prompt for the given purpose, pre-filled with
+    /// `buffer` (empty for create, the current filename for rename).
+    pub fn begin_prompt(&mut self, kind: NotePromptKind, buffer: String) {
+        self.prompt = Some(buffer);
+        self.prompt_kind = Some(kind);
     }
 
     /// Append a character to the prompt buffer. No-op if the prompt isn't
@@ -94,9 +141,21 @@ impl NotesPopupState {
         }
     }
 
-    /// Close the prompt without creating anything.
+    /// Close the prompt without creating or renaming anything.
     pub fn cancel_prompt(&mut self) {
         self.prompt = None;
+        self.prompt_kind = None;
+    }
+
+    /// Open the delete-confirmation sub-state for the selected row. No-op on
+    /// an empty list.
+    pub fn begin_delete_confirm(&mut self) {
+        self.pending_delete = self.selected_index();
+    }
+
+    /// Close the delete-confirmation sub-state without deleting anything.
+    pub fn cancel_delete_confirm(&mut self) {
+        self.pending_delete = None;
     }
 }
 
@@ -186,24 +245,40 @@ impl App {
 
     /// Open the inline "new note name" prompt (`n` from the notes list).
     pub fn begin_new_note_prompt(&mut self) {
-        self.notes_popup.begin_prompt();
+        self.notes_popup
+            .begin_prompt(NotePromptKind::Create, String::new());
     }
 
-    /// Cancel the inline "new note name" prompt without creating anything.
-    pub fn cancel_new_note_prompt(&mut self) {
+    /// Open the inline rename prompt (`r` from the notes list) for the
+    /// selected row, pre-filled with its current filename. No-op on an
+    /// empty list.
+    pub fn begin_rename_prompt(&mut self) {
+        let Some(index) = self.notes_popup.selected_index() else {
+            return;
+        };
+        let Some(path) = self.notes_popup.files.get(index) else {
+            return;
+        };
+        let current_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.notes_popup
+            .begin_prompt(NotePromptKind::Rename { index }, current_name);
+    }
+
+    /// Cancel the inline prompt (create or rename) without writing anything.
+    pub fn cancel_note_prompt(&mut self) {
         self.notes_popup.cancel_prompt();
     }
 
-    /// Confirm the inline "new note name" prompt (Enter): normalize the
-    /// typed name into a `.md` filename (appending `.md` unless already
-    /// present, case-insensitively), write `note::note_template` into the
-    /// task's notes folder, and — for the task's very first note — append a
-    /// `notes:<id>/` token to its todo.txt line. A no-op that stays in the
-    /// prompt on an empty name. Blocked from `View::Archive` for both a
-    /// first note and an additional one, mirroring the old
-    /// `open_note_for_current_with_create`'s Archive restriction — creating
-    /// a brand-new note is a write, unlike opening an existing one.
-    pub fn confirm_new_note_prompt(&mut self) {
+    /// Confirm the inline prompt (Enter), dispatching to create or rename
+    /// depending on what the prompt was opened for. A no-op that stays in
+    /// the prompt on an empty name, for both purposes.
+    pub fn confirm_note_prompt(&mut self) {
+        let Some(kind) = self.notes_popup.prompt_kind else {
+            return;
+        };
         let Some(input) = self.notes_popup.prompt.clone() else {
             return;
         };
@@ -212,6 +287,22 @@ impl App {
             return;
         }
 
+        match kind {
+            NotePromptKind::Create => self.confirm_create_note(name),
+            NotePromptKind::Rename { index } => self.confirm_rename_note(index, name),
+        }
+    }
+
+    /// Create-note half of `confirm_note_prompt`: normalize the typed name
+    /// into a `.md` filename (appending `.md` unless already present,
+    /// case-insensitively), write `note::note_template` into the task's
+    /// notes folder, and — for the task's very first note — append a
+    /// `notes:<id>/` token to its todo.txt line. Blocked from
+    /// `View::Archive` for both a first note and an additional one,
+    /// mirroring the old `open_note_for_current_with_create`'s Archive
+    /// restriction — creating a brand-new note is a write, unlike opening
+    /// an existing one.
+    fn confirm_create_note(&mut self, name: &str) {
         if matches!(self.view(), View::Archive) {
             self.flash("archived task has no note");
             self.notes_popup.cancel_prompt();
@@ -257,6 +348,115 @@ impl App {
 
         self.notes_popup.files = note::list_notes(&folder.dir);
         self.notes_popup.cancel_prompt();
+    }
+
+    /// Rename-note half of `confirm_note_prompt`: normalize the typed name
+    /// the same way create does, then `std::fs::rename` the file at `index`
+    /// to it within the same folder. Renaming to the file's own current
+    /// name (after normalization) is treated as a harmless no-op rather
+    /// than an error. Refuses — with a flash message, staying in the
+    /// prompt — a rename that would silently overwrite a *different*
+    /// existing file.
+    fn confirm_rename_note(&mut self, index: usize, name: &str) {
+        let Some(folder) = self.notes_popup.folder.clone() else {
+            self.notes_popup.cancel_prompt();
+            return;
+        };
+        let Some(old_path) = self.notes_popup.files.get(index).cloned() else {
+            self.notes_popup.cancel_prompt();
+            return;
+        };
+
+        let file_name = normalize_note_file_name(name);
+        let new_path = folder.dir.join(&file_name);
+
+        if new_path == old_path {
+            self.notes_popup.cancel_prompt();
+            return;
+        }
+        if new_path.exists() {
+            self.flash(format!("a note named {file_name} already exists"));
+            return;
+        }
+
+        if let Err(e) = std::fs::rename(&old_path, &new_path) {
+            self.flash(format!("note rename failed: {e}"));
+            self.notes_popup.cancel_prompt();
+            return;
+        }
+
+        self.notes_popup.files = note::list_notes(&folder.dir);
+        match self.notes_popup.files.iter().position(|p| *p == new_path) {
+            Some(pos) => self.notes_popup.cursor = pos,
+            None => self.notes_popup.clamp_cursor(),
+        }
+        self.notes_popup.cancel_prompt();
+    }
+
+    /// Open the delete-confirmation sub-state (`d` from the notes list) for
+    /// the selected row. No-op on an empty list.
+    pub fn begin_delete_note_confirm(&mut self) {
+        self.notes_popup.begin_delete_confirm();
+    }
+
+    /// Cancel the delete-confirmation sub-state without deleting anything.
+    pub fn cancel_delete_note_confirm(&mut self) {
+        self.notes_popup.cancel_delete_confirm();
+    }
+
+    /// Confirm the pending delete (`y`/Enter while `pending_delete` is
+    /// `Some`): `std::fs::remove_file` the selected note, refresh the file
+    /// list, and clamp the cursor the same way `move_down`/`move_up` do.
+    pub fn confirm_delete_note(&mut self) {
+        let Some(index) = self.notes_popup.pending_delete else {
+            return;
+        };
+        let Some(folder) = self.notes_popup.folder.clone() else {
+            self.notes_popup.cancel_delete_confirm();
+            return;
+        };
+        let Some(path) = self.notes_popup.files.get(index).cloned() else {
+            self.notes_popup.cancel_delete_confirm();
+            return;
+        };
+
+        if let Err(e) = std::fs::remove_file(&path) {
+            self.flash(format!("note delete failed: {e}"));
+            self.notes_popup.cancel_delete_confirm();
+            return;
+        }
+
+        self.notes_popup.files = note::list_notes(&folder.dir);
+        self.notes_popup.clamp_cursor();
+        self.notes_popup.cancel_delete_confirm();
+    }
+
+    /// Unlink the selected note (`u` from the notes list): a task's notes
+    /// folder is exclusively that task's own notes, so "leave it orphaned
+    /// on disk" means physically moving the file out of it into the shared
+    /// `notes_dir/unlinked/` directory (see `note::unlink_note`), then
+    /// refreshing the file list and clamping the cursor. No confirmation —
+    /// unlike delete, this never touches the file's content. No-op on an
+    /// empty list.
+    pub fn unlink_selected_note(&mut self) {
+        let Some(index) = self.notes_popup.selected_index() else {
+            return;
+        };
+        let Some(folder) = self.notes_popup.folder.clone() else {
+            return;
+        };
+        let Some(path) = self.notes_popup.files.get(index).cloned() else {
+            return;
+        };
+        let notes_dir = self.notes_dir().clone();
+
+        match note::unlink_note(&path, &notes_dir, &folder.id) {
+            Ok(_) => {
+                self.notes_popup.files = note::list_notes(&folder.dir);
+                self.notes_popup.clamp_cursor();
+            }
+            Err(e) => self.flash(format!("note unlink failed: {e}")),
+        }
     }
 }
 
@@ -365,7 +565,7 @@ mod tests {
         for c in "foo".chars() {
             app.notes_popup.prompt_push(c);
         }
-        app.confirm_new_note_prompt();
+        app.confirm_note_prompt();
 
         assert!(folder_dir.join("foo.md").exists());
         assert!(!folder_dir.join("foo.md.md").exists());
@@ -389,7 +589,7 @@ mod tests {
         for c in "foo.md".chars() {
             app.notes_popup.prompt_push(c);
         }
-        app.confirm_new_note_prompt();
+        app.confirm_note_prompt();
 
         assert!(folder_dir.join("foo.md").exists());
         assert!(!folder_dir.join("foo.md.md").exists());
@@ -411,7 +611,7 @@ mod tests {
         for c in "foo".chars() {
             app.notes_popup.prompt_push(c);
         }
-        app.cancel_new_note_prompt();
+        app.cancel_note_prompt();
 
         assert!(app.notes_popup.prompt.is_none());
         assert!(!dir.exists(), "cancelling must not create the notes dir");
@@ -430,7 +630,7 @@ mod tests {
         app.open_notes_for_current();
 
         app.begin_new_note_prompt();
-        app.confirm_new_note_prompt();
+        app.confirm_note_prompt();
 
         assert_eq!(app.notes_popup.prompt, Some(String::new()));
         assert!(!dir.exists());
@@ -459,7 +659,7 @@ mod tests {
         for c in "foo".chars() {
             app.notes_popup.prompt_push(c);
         }
-        app.confirm_new_note_prompt();
+        app.confirm_note_prompt();
 
         let folder = app.notes_popup.folder.clone().expect("folder resolved");
         assert!(folder.existed_in_task);
@@ -499,7 +699,7 @@ mod tests {
         for c in "b".chars() {
             app.notes_popup.prompt_push(c);
         }
-        app.confirm_new_note_prompt();
+        app.confirm_note_prompt();
 
         assert!(notes_folder.join("b.md").exists());
         assert_eq!(app.tasks()[0].raw, raw.trim(), "line must not be rewritten");
@@ -532,7 +732,7 @@ mod tests {
         for c in "foo".chars() {
             app.notes_popup.prompt_push(c);
         }
-        app.confirm_new_note_prompt();
+        app.confirm_note_prompt();
 
         assert_eq!(app.flash_active(), Some("archived task has no note"));
         assert!(!dir.exists(), "nothing should be written to disk");
@@ -633,6 +833,311 @@ mod tests {
 
         assert!(old_path.exists(), "legacy file must be left in place");
         assert_eq!(app.archive().tasks()[0].raw, archived_raw);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- T5: rename ------------------------------------------------------
+
+    fn app_with_two_notes(dir: &std::path::Path) -> App {
+        let notes_folder = dir.join("tasks").join("abc123");
+        std::fs::create_dir_all(&notes_folder).expect("create notes folder");
+        std::fs::write(notes_folder.join("a.md"), "content a").expect("write a.md");
+        std::fs::write(notes_folder.join("b.md"), "content b").expect("write b.md");
+        let cfg = Config {
+            notes_dir: Some(dir.to_string_lossy().into_owned()),
+            ..Config::default()
+        };
+        let raw = "Write PR summary +work notes:abc123/\n";
+        let mut app = build_app_with_config(raw, cfg);
+        app.open_notes_for_current();
+        app
+    }
+
+    #[test]
+    fn begin_rename_prompt_prefills_current_file_name() {
+        let dir = test_path().with_extension("notes");
+        let mut app = app_with_two_notes(&dir);
+
+        app.begin_rename_prompt();
+
+        assert_eq!(app.notes_popup.prompt.as_deref(), Some("a.md"));
+        assert_eq!(
+            app.notes_popup.prompt_kind,
+            Some(NotePromptKind::Rename { index: 0 })
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn confirm_rename_note_renames_file_on_disk_and_refreshes_list() {
+        let dir = test_path().with_extension("notes");
+        let mut app = app_with_two_notes(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        app.begin_rename_prompt();
+        app.notes_popup.prompt = Some(String::new());
+        for c in "renamed".chars() {
+            app.notes_popup.prompt_push(c);
+        }
+        app.confirm_note_prompt();
+
+        assert!(!notes_folder.join("a.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(notes_folder.join("renamed.md")).expect("renamed exists"),
+            "content a"
+        );
+        assert_eq!(
+            app.notes_popup.files,
+            vec![notes_folder.join("b.md"), notes_folder.join("renamed.md")]
+        );
+        assert_eq!(
+            app.notes_popup.selected(),
+            Some(&notes_folder.join("renamed.md")),
+            "cursor should still point at the renamed file"
+        );
+        assert!(app.notes_popup.prompt.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn confirm_rename_note_appends_md_extension_when_missing() {
+        let dir = test_path().with_extension("notes");
+        let mut app = app_with_two_notes(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        app.begin_rename_prompt();
+        app.notes_popup.prompt = Some(String::new());
+        for c in "renamed".chars() {
+            app.notes_popup.prompt_push(c);
+        }
+        app.confirm_note_prompt();
+
+        assert!(notes_folder.join("renamed.md").exists());
+        assert!(!notes_folder.join("renamed.md.md").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn confirm_rename_note_refuses_collision_with_another_existing_file() {
+        let dir = test_path().with_extension("notes");
+        let mut app = app_with_two_notes(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        app.begin_rename_prompt(); // selects a.md (cursor starts at 0)
+        app.notes_popup.prompt = Some(String::new());
+        for c in "b".chars() {
+            app.notes_popup.prompt_push(c);
+        }
+        app.confirm_note_prompt();
+
+        assert_eq!(app.flash_active(), Some("a note named b.md already exists"));
+        assert!(
+            app.notes_popup.prompt.is_some(),
+            "must stay in the prompt on a collision"
+        );
+        assert!(notes_folder.join("a.md").exists(), "original untouched");
+        assert_eq!(
+            std::fs::read_to_string(notes_folder.join("a.md")).expect("a.md exists"),
+            "content a"
+        );
+        assert_eq!(
+            std::fs::read_to_string(notes_folder.join("b.md")).expect("b.md exists"),
+            "content b"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn confirm_rename_note_to_its_own_current_name_is_a_harmless_noop() {
+        let dir = test_path().with_extension("notes");
+        let mut app = app_with_two_notes(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        app.begin_rename_prompt(); // "a.md" pre-filled
+        app.confirm_note_prompt();
+
+        assert!(app.flash_active().is_none());
+        assert!(notes_folder.join("a.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(notes_folder.join("a.md")).expect("a.md exists"),
+            "content a"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cancel_note_prompt_during_rename_changes_nothing_on_disk() {
+        let dir = test_path().with_extension("notes");
+        let mut app = app_with_two_notes(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        app.begin_rename_prompt();
+        app.notes_popup.prompt = Some(String::new());
+        for c in "renamed".chars() {
+            app.notes_popup.prompt_push(c);
+        }
+        app.cancel_note_prompt();
+
+        assert!(notes_folder.join("a.md").exists());
+        assert!(!notes_folder.join("renamed.md").exists());
+        assert!(app.notes_popup.prompt.is_none());
+        assert!(app.notes_popup.prompt_kind.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn begin_rename_prompt_on_empty_list_is_noop() {
+        let dir = test_path().with_extension("notes");
+        let cfg = Config {
+            notes_dir: Some(dir.to_string_lossy().into_owned()),
+            ..Config::default()
+        };
+        let mut app = build_app_with_config("Write PR summary +work\n", cfg);
+        app.open_notes_for_current();
+
+        app.begin_rename_prompt();
+
+        assert!(app.notes_popup.prompt.is_none());
+        assert!(app.notes_popup.prompt_kind.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- T5: delete --------------------------------------------------------
+
+    #[test]
+    fn confirm_delete_note_removes_file_and_clamps_cursor_on_last_row() {
+        let dir = test_path().with_extension("notes");
+        let mut app = app_with_two_notes(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+        app.notes_popup.cursor = 1; // b.md, the last row
+
+        app.begin_delete_note_confirm();
+        assert_eq!(app.notes_popup.pending_delete, Some(1));
+
+        app.confirm_delete_note();
+
+        assert!(!notes_folder.join("b.md").exists());
+        assert_eq!(app.notes_popup.files, vec![notes_folder.join("a.md")]);
+        assert_eq!(
+            app.notes_popup.cursor, 0,
+            "cursor must clamp back onto a.md"
+        );
+        assert!(app.notes_popup.pending_delete.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_confirm_n_leaves_file_untouched_and_returns_to_browsing() {
+        let dir = test_path().with_extension("notes");
+        let mut app = app_with_two_notes(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        app.begin_delete_note_confirm();
+        app.cancel_delete_note_confirm();
+
+        assert!(notes_folder.join("a.md").exists());
+        assert!(app.notes_popup.pending_delete.is_none());
+        assert_eq!(app.notes_popup.files.len(), 2, "list untouched");
+
+        // Subsequent navigation still works — not stuck in the confirm state.
+        app.notes_popup.move_down();
+        assert_eq!(app.notes_popup.cursor, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn begin_delete_note_confirm_on_empty_list_is_noop() {
+        let dir = test_path().with_extension("notes");
+        let cfg = Config {
+            notes_dir: Some(dir.to_string_lossy().into_owned()),
+            ..Config::default()
+        };
+        let mut app = build_app_with_config("Write PR summary +work\n", cfg);
+        app.open_notes_for_current();
+
+        app.begin_delete_note_confirm();
+
+        assert!(app.notes_popup.pending_delete.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- T5: unlink --------------------------------------------------------
+
+    #[test]
+    fn unlink_selected_note_moves_file_out_of_task_folder_and_clamps_cursor() {
+        let dir = test_path().with_extension("notes");
+        let mut app = app_with_two_notes(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+        app.notes_popup.cursor = 1; // b.md, the last row
+
+        app.unlink_selected_note();
+
+        assert!(!notes_folder.join("b.md").exists());
+        let unlinked_path = dir.join("unlinked").join("b.md");
+        assert_eq!(
+            std::fs::read_to_string(&unlinked_path).expect("unlinked file readable"),
+            "content b"
+        );
+        assert_eq!(
+            app.notes_popup.files,
+            vec![notes_folder.join("a.md")],
+            "no longer listed in the task's notes"
+        );
+        assert_eq!(app.notes_popup.cursor, 0, "cursor must clamp");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unlink_selected_note_prefixes_with_task_id_on_name_collision_across_tasks() {
+        let dir = test_path().with_extension("notes");
+        let unlinked_dir = dir.join("unlinked");
+        std::fs::create_dir_all(&unlinked_dir).expect("create unlinked dir");
+        std::fs::write(unlinked_dir.join("a.md"), "from a different task")
+            .expect("pre-existing unlinked file");
+
+        let mut app = app_with_two_notes(&dir);
+
+        app.unlink_selected_note(); // cursor 0 == a.md
+
+        assert_eq!(
+            std::fs::read_to_string(unlinked_dir.join("a.md")).expect("original preserved"),
+            "from a different task",
+            "the pre-existing unlinked file from another task must survive"
+        );
+        assert_eq!(
+            std::fs::read_to_string(unlinked_dir.join("abc123-a.md")).expect("prefixed file"),
+            "content a"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unlink_selected_note_on_empty_list_is_noop() {
+        let dir = test_path().with_extension("notes");
+        let cfg = Config {
+            notes_dir: Some(dir.to_string_lossy().into_owned()),
+            ..Config::default()
+        };
+        let mut app = build_app_with_config("Write PR summary +work\n", cfg);
+        app.open_notes_for_current();
+
+        app.unlink_selected_note();
+
+        assert!(app.notes_popup.files.is_empty());
+        assert!(!dir.join("unlinked").exists());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
