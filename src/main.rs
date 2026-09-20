@@ -11,7 +11,9 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 use std::io::Write;
 
 use tuxedo::action::{Action, RecAction};
-use tuxedo::app::{AddOutcome, App, CalendarTarget, DialogInputMode, Mode, OverlayKind, View};
+use tuxedo::app::{
+    AddOutcome, App, CalendarTarget, DialogInputMode, Mode, NoteEditorMode, OverlayKind, View,
+};
 use tuxedo::cli;
 use tuxedo::config::Config;
 use tuxedo::config_watcher;
@@ -397,20 +399,29 @@ fn handle_share(app: &mut App, _key: KeyEvent) {
 /// Notes-list popup: j/k (or the arrows) move the cursor, `n` starts an
 /// inline "new note name" prompt, `r` renames the selected row (same inline
 /// prompt, pre-filled), `d` opens a delete-confirmation sub-state, `u`
-/// unlinks the selected row, Esc closes back to Normal. Selecting a row to
-/// open it does nothing yet; `e`/`i` opening the file into the embedded
-/// editor is wired in a later task. MVP scope deliberately skips a `gg`/`G`
-/// chord here: `app.chord` is a single shared leader-state machine already
-/// loaded with Normal-mode meanings (`dd`, `yy`, `gg`, `fp`/`fc`/`ff`), and
-/// this is a small list with no urgent need for jump-to-top/bottom, so plain
-/// up/down keeps this slice small.
+/// unlinks the selected row, `e`/`i` open the selected row into the embedded
+/// editor (Normal/Insert sub-mode respectively — see
+/// `App::open_note_editor_normal`/`_insert`), Esc closes back to Normal.
+/// While the editor is open (`app.notes_popup.active_editor.is_some()`),
+/// this function routes to `handle_note_editor` instead — none of the list
+/// keys below (including `n`/`r`/`d`/`u`) reach the list while a file is
+/// being edited. MVP scope deliberately skips a `gg`/`G` chord here:
+/// `app.chord` is a single shared leader-state machine already loaded with
+/// Normal-mode meanings (`dd`, `yy`, `gg`, `fp`/`fc`/`ff`), and this is a
+/// small list with no urgent need for jump-to-top/bottom, so plain up/down
+/// keeps this slice small.
 ///
-/// `n`/`r`/`d`/`u` reuse mnemonics from elsewhere in the app (`n` from the
-/// main list's `BeginAdd`, `d` from `dd`'s delete), but this popup owns its
-/// own keyspace (per the doc comment on `src/keybinds.rs`) and never goes
-/// through `Action`/`KeyBindings` — none of these bindings can collide with
-/// the global versions.
+/// `n`/`r`/`d`/`u`/`e`/`i` reuse mnemonics from elsewhere in the app (`n`
+/// from the main list's `BeginAdd`, `d` from `dd`'s delete, `e`/`i` from
+/// `BeginEdit`/`BeginEditInsert`), but this popup owns its own keyspace (per
+/// the doc comment on `src/keybinds.rs`) and never goes through
+/// `Action`/`KeyBindings` — none of these bindings can collide with the
+/// global versions.
 fn handle_notes(app: &mut App, key: KeyEvent) {
+    if app.notes_popup.active_editor.is_some() {
+        handle_note_editor(app, key);
+        return;
+    }
     if app.notes_popup.prompt.is_some() {
         handle_notes_prompt(app, key);
         return;
@@ -426,7 +437,65 @@ fn handle_notes(app: &mut App, key: KeyEvent) {
         KeyCode::Char('r') => app.begin_rename_prompt(),
         KeyCode::Char('d') => app.begin_delete_note_confirm(),
         KeyCode::Char('u') => app.unlink_selected_note(),
+        KeyCode::Char('e') => app.open_note_editor_normal(),
+        KeyCode::Char('i') => app.open_note_editor_insert(),
         KeyCode::Esc => app.mode = Mode::Normal,
+        _ => {}
+    }
+}
+
+/// The embedded note editor nested inside `Mode::Notes` (see
+/// `NotesPopupState::active_editor`, `src/app/note_editor.rs`). Dispatches on
+/// the editor's own Normal/Insert sub-mode, mirroring how `Mode::Insert`
+/// dispatches on `DialogInputMode` elsewhere in this file.
+fn handle_note_editor(app: &mut App, key: KeyEvent) {
+    let Some(mode) = app.notes_popup.active_editor.as_ref().map(|e| e.mode()) else {
+        return;
+    };
+    match mode {
+        NoteEditorMode::Normal => handle_note_editor_normal(app, key),
+        NoteEditorMode::Insert => handle_note_editor_insert(app, key),
+    }
+}
+
+/// Normal sub-mode of the embedded note editor: `hjkl`/arrows move the
+/// cursor, `i` enters Insert, `Ctrl+S` saves (see the module doc on
+/// `src/app/note_editor.rs` for why this key was chosen over a
+/// `:`-command-line this codebase doesn't have), Esc steps back out to the
+/// notes list — `active_editor` becomes `None`, `Mode::Notes` itself is
+/// untouched. A *second* Esc from there (now the bare list, handled by
+/// `handle_notes` above) is what closes the whole popup to `Mode::Normal`.
+fn handle_note_editor_normal(app: &mut App, key: KeyEvent) {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
+        app.save_note_editor();
+        return;
+    }
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.note_editor_move_down(),
+        KeyCode::Char('k') | KeyCode::Up => app.note_editor_move_up(),
+        KeyCode::Char('h') | KeyCode::Left => app.note_editor_move_left(),
+        KeyCode::Char('l') | KeyCode::Right => app.note_editor_move_right(),
+        KeyCode::Char('i') => app.note_editor_enter_insert(),
+        KeyCode::Esc => app.close_note_editor(),
+        _ => {}
+    }
+}
+
+/// Insert sub-mode of the embedded note editor: characters type in at the
+/// cursor, Enter splits the line, Backspace deletes (joining with the
+/// previous line at column 0), `Ctrl+S` saves, Esc returns to the editor's
+/// Normal sub-mode — it does not leave the editor (see
+/// `NoteEditorState::esc_to_normal`).
+fn handle_note_editor_insert(app: &mut App, key: KeyEvent) {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
+        app.save_note_editor();
+        return;
+    }
+    match key.code {
+        KeyCode::Esc => app.note_editor_esc_to_normal(),
+        KeyCode::Enter => app.note_editor_split_line(),
+        KeyCode::Backspace => app.note_editor_backspace(),
+        KeyCode::Char(c) => app.note_editor_insert_char(c),
         _ => {}
     }
 }
@@ -2625,6 +2694,251 @@ mod tests {
         assert!(notes_folder.join("renamed.md").exists());
         assert!(app.notes_popup.prompt.is_none());
         assert_eq!(app.mode, Mode::Notes);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- T6+T7: embedded editor wiring ------------------------------------
+
+    #[test]
+    fn handle_notes_e_key_opens_editor_in_normal_submode() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-editor-e-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+
+        handle_notes(&mut app, key('e'));
+
+        let editor = app
+            .notes_popup
+            .active_editor
+            .as_ref()
+            .expect("editor opened");
+        assert_eq!(editor.mode(), NoteEditorMode::Normal);
+        assert_eq!(editor.lines(), &["content a"]);
+        assert_eq!(app.mode, Mode::Notes, "still nested inside Mode::Notes");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_notes_i_key_opens_editor_in_insert_submode() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-editor-i-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+
+        handle_notes(&mut app, key('i'));
+
+        let editor = app
+            .notes_popup
+            .active_editor
+            .as_ref()
+            .expect("editor opened");
+        assert_eq!(editor.mode(), NoteEditorMode::Insert);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn while_editor_is_active_list_keys_do_not_leak_to_the_list() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-editor-noleak-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        handle_notes(&mut app, key('e'));
+        assert_eq!(app.notes_popup.cursor, 0);
+
+        // These are list-mode mnemonics (next note, rename, delete, unlink);
+        // while the editor is active they must be consumed/ignored by the
+        // editor's Normal sub-mode instead of reaching the list.
+        handle_notes(&mut app, key('n'));
+        handle_notes(&mut app, key('r'));
+        handle_notes(&mut app, key('d'));
+        handle_notes(&mut app, key('u'));
+
+        assert_eq!(
+            app.notes_popup.cursor, 0,
+            "list cursor must be untouched by editor-mode keys"
+        );
+        assert_eq!(
+            app.notes_popup.files.len(),
+            2,
+            "no file was deleted/unlinked"
+        );
+        assert!(notes_folder.join("a.md").exists());
+        assert!(notes_folder.join("b.md").exists());
+        assert!(
+            app.notes_popup.prompt.is_none(),
+            "no rename/create prompt must have opened"
+        );
+        assert!(app.notes_popup.pending_delete.is_none());
+        assert!(
+            app.notes_popup.active_editor.is_some(),
+            "still inside the editor"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_step_esc_leaves_editor_to_list_then_list_to_mode_normal() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-editor-esc-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+
+        handle_notes(&mut app, key('e'));
+        assert!(app.notes_popup.active_editor.is_some());
+
+        // First Esc (editor's Normal sub-mode): back to the list, Mode::Notes
+        // unchanged.
+        handle_notes(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(
+            app.notes_popup.active_editor.is_none(),
+            "first Esc leaves the editor"
+        );
+        assert_eq!(
+            app.mode,
+            Mode::Notes,
+            "first Esc must not close the whole popup"
+        );
+
+        // Second Esc (bare list): closes the whole popup.
+        handle_notes(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            app.mode,
+            Mode::Normal,
+            "second Esc from the bare list closes the popup"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn esc_from_insert_submode_returns_to_editor_normal_not_the_list() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-editor-insert-esc-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+
+        handle_notes(&mut app, key('i'));
+        assert_eq!(
+            app.notes_popup
+                .active_editor
+                .as_ref()
+                .expect("editor open")
+                .mode(),
+            NoteEditorMode::Insert
+        );
+
+        handle_notes(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        let editor = app
+            .notes_popup
+            .active_editor
+            .as_ref()
+            .expect("Esc from Insert must not leave the editor");
+        assert_eq!(editor.mode(), NoteEditorMode::Normal);
+        assert_eq!(app.mode, Mode::Notes);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Same shape as `build_notes_app_with_two_files`, but `a.md` starts
+    /// empty so editor typing/save tests aren't tangled up with tracing
+    /// cursor math through pre-existing content.
+    fn build_notes_app_with_one_empty_file(dir: &std::path::Path) -> App {
+        let notes_folder = dir.join("tasks").join("abc123");
+        std::fs::create_dir_all(&notes_folder).expect("create notes folder");
+        std::fs::write(notes_folder.join("a.md"), "").expect("write empty a.md");
+        let path = std::env::temp_dir().join(format!(
+            "tuxedo-notes-empty-{}-{:?}.txt",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let raw = "Write PR summary +work notes:abc123/\n";
+        std::fs::write(&path, raw).expect("write todo.txt");
+        let cfg = Config {
+            notes_dir: Some(dir.to_string_lossy().into_owned()),
+            ..Config::default()
+        };
+        let mut app = App::new(path, raw.into(), "2026-05-07".into(), cfg);
+        app.open_notes_for_current();
+        app
+    }
+
+    #[test]
+    fn typing_in_insert_submode_edits_the_buffer_via_full_key_routing() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-editor-type-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_one_empty_file(&dir);
+
+        handle_notes(&mut app, key('i'));
+        for c in "hi".chars() {
+            handle_notes(&mut app, key(c));
+        }
+        handle_notes(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        for c in "there".chars() {
+            handle_notes(&mut app, key(c));
+        }
+        handle_notes(
+            &mut app,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+
+        let editor = app
+            .notes_popup
+            .active_editor
+            .as_ref()
+            .expect("still editing");
+        assert_eq!(editor.lines(), &["hi", "ther"]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ctrl_s_saves_the_editor_buffer_to_disk_in_either_submode() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-editor-save-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_one_empty_file(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        handle_notes(&mut app, key('i'));
+        for c in "saved!".chars() {
+            handle_notes(&mut app, key(c));
+        }
+        handle_notes(&mut app, ctrl('s'));
+
+        assert_eq!(
+            std::fs::read_to_string(notes_folder.join("a.md")).expect("read back"),
+            "saved!\n"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

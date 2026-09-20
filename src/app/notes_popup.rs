@@ -1,11 +1,14 @@
 //! State for the notes-list popup (`Mode::Notes`): browsing, create, rename,
 //! delete (with confirmation) and unlink, all acting on the row currently
 //! selected in the list. Selecting a file to open into the embedded editor
-//! is wired in a later task (T6+ in `odd/tasks/notes-popup.md`).
+//! (`active_editor`, see `src/app/note_editor.rs`) is the deepest nested
+//! sub-state — the "one optional extra layer" idiom, mirroring
+//! `DraftOverlay: Option<T>` layered on top of `Mode::Insert`.
 
 use std::path::PathBuf;
 
 use super::App;
+use super::note_editor::NoteEditorState;
 use super::types::{Mode, View};
 use crate::core::EditOutcome;
 use crate::note;
@@ -60,6 +63,13 @@ pub struct NotesPopupState {
     /// Index into `files` of the row awaiting delete confirmation ("Delete
     /// <name>? (y/n)"), or `None` while just browsing the list.
     pub pending_delete: Option<usize>,
+    /// The file currently open in the embedded editor (`e`/`i` on the
+    /// selected row — see `App::open_note_editor_normal`/`_insert`), or
+    /// `None` while just browsing the list. Esc from the editor's Normal
+    /// sub-mode clears this back to `None` without touching `Mode` itself;
+    /// a second Esc from the bare list is what closes the whole popup (see
+    /// `main.rs::handle_notes`).
+    pub active_editor: Option<NoteEditorState>,
 }
 
 impl NotesPopupState {
@@ -72,6 +82,7 @@ impl NotesPopupState {
             prompt: None,
             prompt_kind: None,
             pending_delete: None,
+            active_editor: None,
         }
     }
 

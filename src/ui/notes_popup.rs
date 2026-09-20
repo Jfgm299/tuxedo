@@ -3,7 +3,9 @@
 //! Lists the current task's `.md` files with the cursor row highlighted;
 //! `n`/`r` open an inline name prompt (create/rename) in place of the list,
 //! `d` opens an inline "Delete <name>? (y/n)" confirmation in place of the
-//! list. Selecting a file to open is wired in a later task.
+//! list. `e`/`i` on the selected row open it into the embedded editor
+//! instead (`src/ui/note_editor.rs`, swapped in by `src/ui/mod.rs`'s
+//! `Mode::Notes` arm whenever `NotesPopupState::active_editor` is `Some`).
 
 use ratatui::Frame;
 use ratatui::layout::Rect;

@@ -19,6 +19,7 @@ mod draft;
 mod draft_overlay;
 mod flash;
 mod mutations;
+mod note_editor;
 mod notes_popup;
 pub mod palette;
 mod picker;
@@ -43,6 +44,7 @@ pub use draft_overlay::{
     format_rec_value, recurrence_next_preview,
 };
 pub use flash::Flash;
+pub use note_editor::{NoteEditorMode, NoteEditorState};
 pub use notes_popup::{NotePromptKind, NotesPopupState};
 pub use palette::CommandPaletteState;
 pub use prefs::{Layout, Prefs};

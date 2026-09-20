@@ -16,6 +16,7 @@ pub mod help;
 pub mod hyperlinks;
 pub mod list;
 pub mod logo;
+pub mod note_editor;
 pub mod notes_popup;
 pub mod settings;
 pub mod share;
@@ -169,7 +170,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
             let dlg_h: u16 = (DIALOG_H + 4).min(area.height.saturating_sub(2));
             let r = centered_in(area, dlg_w, dlg_h);
             frame.render_widget(Clear, r);
-            notes_popup::render(frame, r, app);
+            if app.notes_popup.active_editor.is_some() {
+                note_editor::render(frame, r, app);
+            } else {
+                notes_popup::render(frame, r, app);
+            }
         }
         Mode::PickTheme => {
             let h: u16 = area.height.saturating_sub(4).min(PALETTE_MAX_H);

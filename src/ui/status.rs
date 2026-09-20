@@ -4,7 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::{App, DialogInputMode, Mode, View};
+use crate::app::{App, DialogInputMode, Mode, NoteEditorMode, View};
 use crate::ui::dialog::draft_cursor_spans;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
@@ -32,7 +32,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Mode::Share => "SHARE".into(),
         Mode::PickTheme => "PICK THEME".into(),
         Mode::Welcome => "WELCOME".into(),
-        Mode::Notes => "NOTES".into(),
+        Mode::Notes => match app.notes_popup.active_editor.as_ref().map(|e| e.mode()) {
+            Some(NoteEditorMode::Normal) => "NORMAL".into(),
+            Some(NoteEditorMode::Insert) => "INSERT".into(),
+            None => "NOTES".into(),
+        },
     };
     if matches!(app.view, View::Archive) {
         mode_label = "ARCHIVE".into();
@@ -60,7 +64,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Mode::CommandPalette => "type to filter · Enter run · Esc cancel",
         Mode::Share => "scan the QR · any key dismisses",
         Mode::Welcome => "c create ./todo.txt · s open sample · q quit",
-        Mode::Notes => "j/k navigate · Esc close",
+        Mode::Notes => match app.notes_popup.active_editor.as_ref().map(|e| e.mode()) {
+            Some(NoteEditorMode::Normal) => {
+                "h/j/k/l or arrows move · i insert · Ctrl+S save · Esc back to list"
+            }
+            Some(NoteEditorMode::Insert) => {
+                "type to edit · Enter newline · Ctrl+S save · Esc normal"
+            }
+            None => "j/k navigate · e/i edit · n new · r rename · d delete · u unlink · Esc close",
+        },
         _ => "j/k · n new · r reschedule · x done · / search · ? help · u undo · q quit",
     };
 
