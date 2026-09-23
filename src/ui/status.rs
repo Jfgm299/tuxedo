@@ -73,7 +73,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             }
             None => "j/k navigate · e/i edit · n new · r rename · d delete · u unlink · Esc close",
         },
-        _ => "j/k · n new · r reschedule · x done · / search · ? help · u undo · q quit",
+        _ => "j/k · n new · r reschedule · x done · o notes · / search · ? help · u undo · q quit",
     };
 
     let mut right_parts = Vec::new();
@@ -191,4 +191,47 @@ pub fn render_command_line(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(line).style(Style::default().bg(theme.bg)),
         area,
     );
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::app::App;
+    use crate::config::Config;
+
+    fn build_app() -> App {
+        let path =
+            std::env::temp_dir().join(format!("tuxedo-status-test-{}.txt", std::process::id()));
+        let body = "(A) Buy milk\n".to_string();
+        std::fs::write(&path, &body).unwrap();
+        App::new(path, body, "2026-05-06".to_string(), Config::default())
+    }
+
+    /// The global Normal/List hint bar (`status::render`'s catch-all arm) is
+    /// a hardcoded string with no other test coverage — confirm it actually
+    /// advertises the `o` notes action rather than only trusting a code
+    /// review of the literal.
+    #[test]
+    fn normal_mode_hint_advertises_notes_action() {
+        let app = build_app();
+        // Wide enough that the middle hint segment isn't clipped by the
+        // chip/right-text layout math before the assertion below gets to see
+        // "o notes" — the real status bar truncates on narrow terminals too,
+        // that's expected and not what this test is checking.
+        let backend = TestBackend::new(200, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let mut text = String::new();
+        for x in 0..buf.area.width {
+            text.push_str(buf[(x, 0)].symbol());
+        }
+        assert!(
+            text.contains("o notes"),
+            "Normal-mode hint bar should advertise the notes action ('o notes'): {text}"
+        );
+    }
 }
