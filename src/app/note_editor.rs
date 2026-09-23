@@ -11,6 +11,18 @@
 //! Insert, and a single save key. `w`/`b`/`e`/`dd`/`yy`/`gg`/`G`/visual
 //! mode/search are explicitly out of scope — follow-up work if actually
 //! missed later, not a gap to quietly patch in here.
+//!
+//! T13 adds a `folke/noice.nvim`-style `:`-command prompt (see
+//! `odd/tasks/notes-popup.md`'s Round 2 exploration note): `:` from the
+//! editor's Normal sub-mode opens `command_prompt: Option<String>` on this
+//! same struct (deliberately, not on `NotesPopupState` or a per-context type
+//! — see the module's doc below on why), Enter parses/executes the MVP
+//! `w`/`q`/`wq`/`x` command set via [`NoteEditorState::execute_command_prompt`],
+//! Esc cancels. The key *dispatch* for `:`/typing/Backspace/Enter/Esc lives
+//! in `main.rs::handle_note_editor_normal` (already shared by the floating
+//! popup and every pinned tab — see `NoteEditorSignal`'s doc comment there),
+//! and the command *parsing and execution* lives here, so both are written
+//! exactly once and work identically in both contexts.
 
 use std::path::PathBuf;
 
@@ -47,6 +59,36 @@ pub struct NoteEditorState {
     cursor_col: usize,
     mode: NoteEditorMode,
     dirty: bool,
+    /// T13's `:`-command prompt buffer: `None` when closed, `Some(text)`
+    /// while open (the `:` keystroke that opened it is the trigger, not
+    /// part of `text` — matches real vim). Lives here rather than on
+    /// `NotesPopupState` so the floating popup and every pinned tab share
+    /// one implementation automatically (see the module doc).
+    command_prompt: Option<String>,
+}
+
+/// What [`NoteEditorState::execute_command_prompt`] decided for the typed
+/// command. The caller (`main.rs::handle_note_editor_normal`, shared by both
+/// the floating popup and every pinned tab) maps this onto
+/// `NoteEditorSignal` — `Ok`/`Error` correspond to the existing
+/// `Handled`/`SaveFailed` signals, `CloseRequested` to the new
+/// `NoteEditorSignal::CloseRequested` variant — since only the caller knows
+/// what "close" means in its own context (pop back to the list vs. close a
+/// pinned tab).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoteCommandResult {
+    /// The command ran with no further action needed (e.g. `:w` succeeded).
+    /// The prompt is already closed.
+    Ok,
+    /// `:q`, or `:wq`/`:x` after a successful save: the editor asked to be
+    /// closed. The prompt is already closed.
+    CloseRequested,
+    /// An unknown/empty command, or a save failure on `:w`/`:wq`/`:x`. The
+    /// message should be flashed; the prompt is already closed, but the
+    /// editor itself stays open (a `:wq`/`:x` save failure deliberately does
+    /// NOT close — see the module-level rationale on
+    /// `execute_command_prompt`).
+    Error(String),
 }
 
 impl NoteEditorState {
@@ -64,6 +106,7 @@ impl NoteEditorState {
             cursor_col: 0,
             mode,
             dirty: false,
+            command_prompt: None,
         }
     }
 
@@ -150,6 +193,89 @@ impl NoteEditorState {
     /// this method never leaves the editor.
     pub fn esc_to_normal(&mut self) {
         self.mode = NoteEditorMode::Normal;
+    }
+
+    // ---- T13: `:`-command prompt -------------------------------------------
+
+    /// The prompt's current buffer, or `None` while it's closed. Rendering
+    /// (`src/ui/note_editor.rs`) and the key dispatcher
+    /// (`main.rs::handle_note_editor_normal`, and its callers deciding
+    /// whether `z`/`Z`/`Tab`/`BackTab` should intercept a key ahead of the
+    /// editor) both read this to know whether the prompt is on screen and
+    /// consuming keys.
+    pub fn command_prompt(&self) -> Option<&str> {
+        self.command_prompt.as_deref()
+    }
+
+    /// `:` from Normal sub-mode: open the prompt with an empty buffer. The
+    /// triggering `:` itself is never part of the buffer (matches real vim).
+    pub fn open_command_prompt(&mut self) {
+        self.command_prompt = Some(String::new());
+    }
+
+    /// Append `c` to the buffer. A no-op if the prompt isn't open.
+    pub fn command_prompt_push(&mut self, c: char) {
+        if let Some(buf) = self.command_prompt.as_mut() {
+            buf.push(c);
+        }
+    }
+
+    /// Remove the last character from the buffer. A no-op on an empty
+    /// buffer or if the prompt isn't open (Backspace never closes the
+    /// prompt itself — only Esc/Enter do).
+    pub fn command_prompt_backspace(&mut self) {
+        if let Some(buf) = self.command_prompt.as_mut() {
+            buf.pop();
+        }
+    }
+
+    /// Esc: cancel the prompt with no side effects — no save, no close
+    /// signal, buffer discarded.
+    pub fn cancel_command_prompt(&mut self) {
+        self.command_prompt = None;
+    }
+
+    /// Enter: parse and execute the buffered command, closing the prompt
+    /// either way (the caller decides what happens next from the returned
+    /// [`NoteCommandResult`]). MVP command set only:
+    ///
+    /// - `w` — save. Success: [`NoteCommandResult::Ok`]. Failure: the error
+    ///   is flashed and the editor stays open (same as `Ctrl+S`'s existing
+    ///   failure handling) — matches this task's read that a save failure
+    ///   should never look like nothing happened, but also should never
+    ///   silently discard unsaved work by closing anyway.
+    /// - `q` — request a close with no save attempt.
+    /// - `wq`/`x` — save, then request a close **only if the save
+    ///   succeeded**. On a save failure the editor stays open with the error
+    ///   flashed, exactly like plain `:w`: closing anyway on a failed save
+    ///   would silently discard the very edit the user just tried to
+    ///   persist, which is worse than making them retry.
+    /// - anything else, including an empty buffer: an error is flashed
+    ///   (`"no command"` for empty, `"unknown command: {input}"` otherwise)
+    ///   and nothing else happens — no save, no close, editor stays in
+    ///   Normal sub-mode.
+    ///
+    /// A no-op call (prompt already closed) returns
+    /// `NoteCommandResult::Error("no command".into())` for the same reason
+    /// an empty buffer does — there is nothing sensible to execute.
+    pub fn execute_command_prompt(&mut self) -> NoteCommandResult {
+        let input = self.command_prompt.take().unwrap_or_default();
+        let cmd = input.trim();
+        if cmd.is_empty() {
+            return NoteCommandResult::Error("no command".to_string());
+        }
+        match cmd {
+            "w" => match self.save() {
+                Ok(()) => NoteCommandResult::Ok,
+                Err(e) => NoteCommandResult::Error(format!("note save failed: {e}")),
+            },
+            "q" => NoteCommandResult::CloseRequested,
+            "wq" | "x" => match self.save() {
+                Ok(()) => NoteCommandResult::CloseRequested,
+                Err(e) => NoteCommandResult::Error(format!("note save failed: {e}")),
+            },
+            other => NoteCommandResult::Error(format!("unknown command: {other}")),
+        }
     }
 
     // ---- Insert-mode editing ----------------------------------------------
@@ -697,6 +823,180 @@ mod tests {
         assert!(app.notes_popup.active_editor.is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- T13: `:`-command prompt -------------------------------------------
+
+    #[test]
+    fn command_prompt_starts_closed_and_open_gives_an_empty_buffer() {
+        let editor = NoteEditorState::load(test_path(), NoteEditorMode::Normal);
+        assert_eq!(editor.command_prompt(), None);
+
+        let mut editor = editor;
+        editor.open_command_prompt();
+        assert_eq!(editor.command_prompt(), Some(""));
+    }
+
+    #[test]
+    fn command_prompt_push_and_backspace_edit_the_buffer() {
+        let mut editor = NoteEditorState::load(test_path(), NoteEditorMode::Normal);
+        editor.open_command_prompt();
+
+        editor.command_prompt_push('w');
+        editor.command_prompt_push('q');
+        assert_eq!(editor.command_prompt(), Some("wq"));
+
+        editor.command_prompt_backspace();
+        assert_eq!(editor.command_prompt(), Some("w"));
+    }
+
+    #[test]
+    fn command_prompt_push_and_backspace_are_noops_when_prompt_is_closed() {
+        let mut editor = NoteEditorState::load(test_path(), NoteEditorMode::Normal);
+
+        editor.command_prompt_push('w');
+        editor.command_prompt_backspace();
+
+        assert_eq!(editor.command_prompt(), None);
+    }
+
+    #[test]
+    fn cancel_command_prompt_discards_the_buffer_without_side_effects() {
+        let path = test_path();
+        std::fs::write(&path, "content\n").expect("write");
+        let mut editor = NoteEditorState::load(path.clone(), NoteEditorMode::Normal);
+        editor.open_command_prompt();
+        editor.command_prompt_push('w');
+
+        editor.cancel_command_prompt();
+
+        assert_eq!(editor.command_prompt(), None);
+        assert!(!editor.dirty());
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read back"),
+            "content\n",
+            "no save happened"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn execute_command_prompt_w_saves_and_returns_ok() {
+        let path = test_path();
+        let mut editor = NoteEditorState::load(path.clone(), NoteEditorMode::Insert);
+        for c in "hello".chars() {
+            editor.insert_char(c);
+        }
+        editor.esc_to_normal();
+        editor.open_command_prompt();
+        editor.command_prompt_push('w');
+
+        let result = editor.execute_command_prompt();
+
+        assert_eq!(result, NoteCommandResult::Ok);
+        assert_eq!(editor.command_prompt(), None, "prompt closed either way");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read back"),
+            "hello\n"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn execute_command_prompt_q_requests_close_without_saving() {
+        let path = test_path();
+        let mut editor = NoteEditorState::load(path.clone(), NoteEditorMode::Insert);
+        editor.insert_char('a');
+        editor.esc_to_normal();
+        editor.open_command_prompt();
+        editor.command_prompt_push('q');
+
+        let result = editor.execute_command_prompt();
+
+        assert_eq!(result, NoteCommandResult::CloseRequested);
+        assert!(!path.exists(), "q never saves");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn execute_command_prompt_wq_and_x_save_then_request_close() {
+        for cmd in ["wq", "x"] {
+            let path = test_path();
+            let mut editor = NoteEditorState::load(path.clone(), NoteEditorMode::Insert);
+            for c in "saved".chars() {
+                editor.insert_char(c);
+            }
+            editor.esc_to_normal();
+            editor.open_command_prompt();
+            for c in cmd.chars() {
+                editor.command_prompt_push(c);
+            }
+
+            let result = editor.execute_command_prompt();
+
+            assert_eq!(result, NoteCommandResult::CloseRequested, "cmd = {cmd}");
+            assert_eq!(
+                std::fs::read_to_string(&path).expect("read back"),
+                "saved\n",
+                "cmd = {cmd}"
+            );
+
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    #[test]
+    fn execute_command_prompt_wq_save_failure_stays_open_with_flashed_error() {
+        // A path that is itself a directory: `std::fs::write` fails on it,
+        // forcing `save()` to return `Err` so the "stay open on a failed
+        // :wq/:x" branch is genuinely exercised, not just asserted.
+        let dir_as_path = test_path().with_extension("dir");
+        std::fs::create_dir_all(&dir_as_path).expect("create dir");
+        let mut editor = NoteEditorState::load(dir_as_path.clone(), NoteEditorMode::Normal);
+        editor.open_command_prompt();
+        for c in "wq".chars() {
+            editor.command_prompt_push(c);
+        }
+
+        let result = editor.execute_command_prompt();
+
+        match result {
+            NoteCommandResult::Error(msg) => {
+                assert!(msg.contains("note save failed"), "got: {msg}")
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir_as_path);
+    }
+
+    #[test]
+    fn execute_command_prompt_unknown_command_flashes_error_and_does_not_close() {
+        let mut editor = NoteEditorState::load(test_path(), NoteEditorMode::Normal);
+        editor.open_command_prompt();
+        for c in "zz".chars() {
+            editor.command_prompt_push(c);
+        }
+
+        let result = editor.execute_command_prompt();
+
+        assert_eq!(
+            result,
+            NoteCommandResult::Error("unknown command: zz".to_string())
+        );
+    }
+
+    #[test]
+    fn execute_command_prompt_empty_command_flashes_a_sensible_error() {
+        let mut editor = NoteEditorState::load(test_path(), NoteEditorMode::Normal);
+        editor.open_command_prompt();
+
+        let result = editor.execute_command_prompt();
+
+        assert_eq!(result, NoteCommandResult::Error("no command".to_string()));
     }
 
     #[test]

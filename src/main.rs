@@ -12,8 +12,8 @@ use std::io::Write;
 
 use tuxedo::action::{Action, RecAction};
 use tuxedo::app::{
-    AddOutcome, App, CalendarTarget, DialogInputMode, Mode, NoteEditorMode, NoteEditorState,
-    OverlayKind, View,
+    AddOutcome, App, CalendarTarget, DialogInputMode, Mode, NoteCommandResult, NoteEditorMode,
+    NoteEditorState, OverlayKind, View,
 };
 use tuxedo::cli;
 use tuxedo::config::Config;
@@ -361,7 +361,15 @@ fn handle_key(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) {
     // popup-internal-style way `handle_notes` below checks `n`/`r`/`d`/`u`.
     if app.pinned_focus {
         let editor_mode = app.active_pinned_note().map(|e| e.mode());
-        if editor_mode == Some(NoteEditorMode::Normal) {
+        // T13: while the active tab's own `:`-command prompt is open, every
+        // key (including `z`/`Z`/`Tab`/`BackTab`) must reach the prompt as
+        // ordinary input instead of being intercepted here — otherwise
+        // typing e.g. `:wq` would toggle focus/close the tab/cycle tabs on
+        // the `q`/`Tab` keystrokes instead of reaching the command buffer.
+        let command_prompt_open = app
+            .active_pinned_note()
+            .is_some_and(|e| e.command_prompt().is_some());
+        if editor_mode == Some(NoteEditorMode::Normal) && !command_prompt_open {
             match key.code {
                 KeyCode::Char('z') => {
                     app.toggle_pin_focus();
@@ -471,10 +479,14 @@ fn handle_notes(app: &mut App, key: KeyEvent) {
         // sub-mode, same restriction as everywhere else `z`/`Z` are checked
         // in this file: in Insert sub-mode `z` is an ordinary typed
         // character, not a request to pin.
-        if key.code == KeyCode::Char('z')
-            && app.notes_popup.active_editor.as_ref().map(|e| e.mode())
-                == Some(NoteEditorMode::Normal)
-        {
+        // T13: same restriction as the pinned-focus branch in `handle_key`
+        // above — while the `:`-command prompt is open, `z` is ordinary
+        // buffer text, not a request to pin.
+        let normal_no_prompt =
+            app.notes_popup.active_editor.as_ref().is_some_and(|e| {
+                e.mode() == NoteEditorMode::Normal && e.command_prompt().is_none()
+            });
+        if key.code == KeyCode::Char('z') && normal_no_prompt {
             app.toggle_pin_focus();
             return;
         }
@@ -522,6 +534,16 @@ enum NoteEditorSignal {
     /// closes the editor back to the notes list; the pinned note drops
     /// keyboard focus back to the main app (it has no list to step back to).
     Esc,
+    /// T13: the `:`-command prompt executed `q`, or `wq`/`x` after a
+    /// successful save — the editor asked to be closed outright (distinct
+    /// from `Esc`'s "step back one layer"). What "closed" means depends on
+    /// the caller: the floating popup pops back to the notes list exactly
+    /// like `Esc` does (`app.close_note_editor()`); the pinned note closes
+    /// the whole tab (`app.close_pinned_note()`), NOT just unfocus — a
+    /// "quit" command that only unfocused would be surprising/inconsistent
+    /// with what `q`/`Z` mean everywhere else in this app (see this
+    /// variant's use in `handle_pinned_note_key` below).
+    CloseRequested,
 }
 
 /// The embedded note editor nested inside `Mode::Notes` (see
@@ -543,7 +565,9 @@ fn handle_note_editor(app: &mut App, key: KeyEvent) {
         // `Mode::Notes` itself untouched. A *second* Esc from there (now the
         // bare list, handled by `handle_notes` above) is what closes the
         // whole popup to `Mode::Normal`.
-        NoteEditorSignal::Esc => app.close_note_editor(),
+        // `:q`/`:wq`/`:x` behave exactly like Esc for the floating popup:
+        // both pop back to the notes list, `active_editor` becomes `None`.
+        NoteEditorSignal::Esc | NoteEditorSignal::CloseRequested => app.close_note_editor(),
     }
 }
 
@@ -574,6 +598,15 @@ fn handle_pinned_note_key(app: &mut App, key: KeyEvent, editor_mode: Option<Note
         // sub-mode "steps back out" the same way `z` does: focus returns to
         // the main app, but the note stays pinned and visible.
         NoteEditorSignal::Esc => app.toggle_pin_focus(),
+        // T13: `:q`/`:wq`/`:x` on a PINNED note's active tab closes that tab
+        // entirely (`app.close_pinned_note()`, same effect as pressing `Z`),
+        // deliberately NOT just unfocus (which is what plain Esc does here).
+        // `q` means "quit/close" everywhere else in this app (the main task
+        // list's `q` quits the whole program); a `:q` that only unfocused
+        // — leaving the note pinned and reachable via `z` — would silently
+        // mean something different from `q` anywhere else, which is more
+        // surprising than useful.
+        NoteEditorSignal::CloseRequested => app.close_pinned_note(),
     }
 }
 
@@ -586,6 +619,13 @@ fn handle_pinned_note_key(app: &mut App, key: KeyEvent, editor_mode: Option<Note
 /// delegators) so this exact function serves both the floating popup's
 /// editor and T11's pinned one — see [`NoteEditorSignal`]'s doc comment.
 fn handle_note_editor_normal(editor: &mut NoteEditorState, key: KeyEvent) -> NoteEditorSignal {
+    // T13: while the `:`-command prompt is open, it owns every key (typing,
+    // Backspace, Enter, Esc) until it closes — checked first, ahead of
+    // `Ctrl+S` and the ordinary motion match below, so none of those can
+    // fire while the prompt is capturing input.
+    if editor.command_prompt().is_some() {
+        return handle_note_editor_command_prompt(editor, key);
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
         return match editor.save() {
             Ok(()) => NoteEditorSignal::Handled,
@@ -598,7 +638,49 @@ fn handle_note_editor_normal(editor: &mut NoteEditorState, key: KeyEvent) -> Not
         KeyCode::Char('h') | KeyCode::Left => editor.move_left(),
         KeyCode::Char('l') | KeyCode::Right => editor.move_right(),
         KeyCode::Char('i') => editor.enter_insert(),
+        KeyCode::Char(':') => editor.open_command_prompt(),
         KeyCode::Esc => return NoteEditorSignal::Esc,
+        _ => {}
+    }
+    NoteEditorSignal::Handled
+}
+
+/// T13's `:`-command prompt sub-state of the editor's Normal sub-mode
+/// (opened by `handle_note_editor_normal` above, checked ahead of every
+/// other key there while `editor.command_prompt().is_some()`). Typing
+/// appends to the buffer, Backspace removes the last character, Esc cancels
+/// with no side effects, Enter parses/executes the buffered command via
+/// `NoteEditorState::execute_command_prompt` (see `src/app/note_editor.rs`
+/// for the `w`/`q`/`wq`/`x`/unknown-command rules) and translates its
+/// `NoteCommandResult` into a `NoteEditorSignal` the caller already knows
+/// how to interpret. Operates on `&mut NoteEditorState` like
+/// `handle_note_editor_normal`/`_insert`, so this one function drives the
+/// prompt identically for the floating popup and every pinned tab — no
+/// duplication.
+///
+/// A literal `:` typed while the prompt is already open falls through to
+/// the ordinary `Char(c)` arm below and is pushed into the buffer like any
+/// other character (matches real vim: `:` has no special meaning once
+/// already in cmdline mode). Control-chord characters (e.g. `Ctrl+S`) are
+/// deliberately NOT pushed — the prompt has no use for chords, and typing
+/// `Ctrl+S` here should not silently insert a stray `s`.
+fn handle_note_editor_command_prompt(
+    editor: &mut NoteEditorState,
+    key: KeyEvent,
+) -> NoteEditorSignal {
+    match key.code {
+        KeyCode::Esc => editor.cancel_command_prompt(),
+        KeyCode::Backspace => editor.command_prompt_backspace(),
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            editor.command_prompt_push(c)
+        }
+        KeyCode::Enter => {
+            return match editor.execute_command_prompt() {
+                NoteCommandResult::Ok => NoteEditorSignal::Handled,
+                NoteCommandResult::CloseRequested => NoteEditorSignal::CloseRequested,
+                NoteCommandResult::Error(msg) => NoteEditorSignal::SaveFailed(msg),
+            };
+        }
         _ => {}
     }
     NoteEditorSignal::Handled
@@ -3530,6 +3612,391 @@ mod tests {
             app.pinned_notes[0].lines(),
             &["content a"],
             "the other, inactive tab is untouched"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- T13: `:`-command prompt (noice-style) -----------------------------
+
+    fn enter_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+    }
+
+    fn backspace_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)
+    }
+
+    fn esc_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn colon_in_editor_normal_submode_opens_an_empty_command_prompt() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-cmd-open-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        handle_notes(&mut app, key('e'));
+
+        handle_notes(&mut app, key(':'));
+
+        let editor = app.notes_popup.active_editor.as_ref().expect("still open");
+        assert_eq!(editor.command_prompt(), Some(""));
+        assert_eq!(editor.mode(), NoteEditorMode::Normal);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn command_prompt_typing_appends_backspace_removes_and_esc_cancels_without_side_effects() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-cmd-edit-cancel-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+        handle_notes(&mut app, key('e'));
+        handle_notes(&mut app, key(':'));
+
+        handle_notes(&mut app, key('w'));
+        handle_notes(&mut app, key('q'));
+        assert_eq!(
+            app.notes_popup
+                .active_editor
+                .as_ref()
+                .expect("editor open")
+                .command_prompt(),
+            Some("wq")
+        );
+        handle_notes(&mut app, backspace_key());
+        assert_eq!(
+            app.notes_popup
+                .active_editor
+                .as_ref()
+                .expect("editor open")
+                .command_prompt(),
+            Some("w")
+        );
+
+        handle_notes(&mut app, esc_key());
+
+        let editor = app.notes_popup.active_editor.as_ref().expect("not closed");
+        assert_eq!(editor.command_prompt(), None, "prompt cancelled");
+        assert_eq!(
+            std::fs::read_to_string(notes_folder.join("a.md")).expect("read back"),
+            "content a",
+            "Esc must not save"
+        );
+        assert_eq!(app.mode, Mode::Notes, "editor stayed open, popup untouched");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn command_prompt_w_enter_saves_and_returns_to_normal_with_no_close_signal() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-cmd-w-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+        handle_notes(&mut app, key('e')); // Normal sub-mode, cursor at column 0
+        for _ in 0.."content a".len() {
+            handle_notes(&mut app, key('l')); // walk to the end of the line
+        }
+        handle_notes(&mut app, key('i'));
+        for c in " appended".chars() {
+            handle_notes(&mut app, key(c));
+        }
+        handle_notes(&mut app, esc_key()); // Insert -> Normal, still inside the editor
+        handle_notes(&mut app, key(':'));
+        handle_notes(&mut app, key('w'));
+
+        handle_notes(&mut app, enter_key());
+
+        assert_eq!(
+            std::fs::read_to_string(notes_folder.join("a.md")).expect("read back"),
+            "content a appended\n"
+        );
+        let editor = app
+            .notes_popup
+            .active_editor
+            .as_ref()
+            .expect("editor stays open, :w never closes");
+        assert_eq!(editor.command_prompt(), None, "prompt closed");
+        assert_eq!(editor.mode(), NoteEditorMode::Normal);
+        assert_eq!(app.mode, Mode::Notes);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn command_prompt_q_enter_closes_the_floating_editor_back_to_the_list() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-cmd-q-floating-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+        handle_notes(&mut app, key('e'));
+        handle_notes(&mut app, key(':'));
+        handle_notes(&mut app, key('q'));
+
+        handle_notes(&mut app, enter_key());
+
+        assert!(
+            app.notes_popup.active_editor.is_none(),
+            "editor closed back to the list"
+        );
+        assert_eq!(app.mode, Mode::Notes, "popup itself stays open");
+        assert_eq!(
+            std::fs::read_to_string(notes_folder.join("a.md")).expect("read back"),
+            "content a",
+            ":q never saves"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn command_prompt_q_enter_on_a_pinned_tab_closes_the_tab_not_just_unfocus() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-cmd-q-pinned-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_pinned_tabs(&dir);
+        assert_eq!(app.pinned_notes.len(), 2);
+        assert_eq!(app.active_pin, 1, "b.md tab is active and focused");
+
+        handle_key(&mut app, key(':'), &KeyBindings::default());
+        handle_key(&mut app, key('q'), &KeyBindings::default());
+        handle_key(&mut app, enter_key(), &KeyBindings::default());
+
+        assert_eq!(
+            app.pinned_notes.len(),
+            1,
+            ":q closed the whole tab, not just unfocused it"
+        );
+        assert_eq!(
+            app.pinned_notes[0]
+                .path()
+                .file_name()
+                .expect("has a name")
+                .to_string_lossy(),
+            "a.md",
+            "the b.md tab is gone, a.md remains"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn command_prompt_wq_and_x_save_and_close_in_both_floating_and_pinned_contexts() {
+        for cmd in ["wq", "x"] {
+            // Floating context.
+            let dir = std::env::temp_dir().join(format!(
+                "tuxedo-cmd-{cmd}-floating-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            let mut app = build_notes_app_with_two_files(&dir);
+            let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+            handle_notes(&mut app, key('e')); // Normal sub-mode, cursor at column 0
+            for _ in 0.."content a".len() {
+                handle_notes(&mut app, key('l')); // walk to the end of the line
+            }
+            handle_notes(&mut app, key('i'));
+            for c in " edited".chars() {
+                handle_notes(&mut app, key(c));
+            }
+            handle_notes(&mut app, esc_key());
+            handle_notes(&mut app, key(':'));
+            for c in cmd.chars() {
+                handle_notes(&mut app, key(c));
+            }
+            handle_notes(&mut app, enter_key());
+
+            assert!(
+                app.notes_popup.active_editor.is_none(),
+                "cmd = {cmd} (floating): editor closed"
+            );
+            assert_eq!(
+                std::fs::read_to_string(notes_folder.join("a.md")).expect("read back"),
+                "content a edited\n",
+                "cmd = {cmd} (floating): saved to disk"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+
+            // Pinned context.
+            let dir = std::env::temp_dir().join(format!(
+                "tuxedo-cmd-{cmd}-pinned-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            let mut app = build_notes_app_with_two_pinned_tabs(&dir);
+            let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+            assert_eq!(app.active_pin, 1, "b.md tab active");
+            for _ in 0.."content b".len() {
+                handle_key(&mut app, key('l'), &KeyBindings::default()); // walk to end
+            }
+            handle_key(&mut app, key('i'), &KeyBindings::default());
+            for c in " edited".chars() {
+                handle_key(&mut app, key(c), &KeyBindings::default());
+            }
+            handle_key(&mut app, esc_key(), &KeyBindings::default());
+            handle_key(&mut app, key(':'), &KeyBindings::default());
+            for c in cmd.chars() {
+                handle_key(&mut app, key(c), &KeyBindings::default());
+            }
+            handle_key(&mut app, enter_key(), &KeyBindings::default());
+
+            assert_eq!(
+                app.pinned_notes.len(),
+                1,
+                "cmd = {cmd} (pinned): tab closed"
+            );
+            assert_eq!(
+                std::fs::read_to_string(notes_folder.join("b.md")).expect("read back"),
+                "content b edited\n",
+                "cmd = {cmd} (pinned): saved to disk"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn command_prompt_wq_save_failure_flashes_and_stays_open_without_closing() {
+        // Reuses the same "path is a directory" trick as the app-level test
+        // in `src/app/note_editor.rs` to force a genuine `save()` failure,
+        // proving `:wq` does not close the editor and silently discard the
+        // edit when the save itself failed.
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-cmd-wq-fail-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let notes_folder = dir.join("tasks").join("abc123");
+        std::fs::create_dir_all(notes_folder.join("a.md")).expect("a.md as a directory");
+        let path = std::env::temp_dir().join(format!(
+            "tuxedo-cmd-wq-fail-todo-{}-{:?}.txt",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let raw = "Write PR summary +work notes:abc123/\n";
+        std::fs::write(&path, raw).expect("write todo.txt");
+        let cfg = Config {
+            notes_dir: Some(dir.to_string_lossy().into_owned()),
+            ..Config::default()
+        };
+        let mut app = App::new(path, raw.into(), "2026-05-07".into(), cfg);
+        app.open_notes_for_current();
+        handle_notes(&mut app, key('e'));
+        handle_notes(&mut app, key(':'));
+        for c in "wq".chars() {
+            handle_notes(&mut app, key(c));
+        }
+
+        handle_notes(&mut app, enter_key());
+
+        assert!(
+            app.notes_popup.active_editor.is_some(),
+            "save failed, editor must stay open rather than silently discard the edit"
+        );
+        assert!(
+            app.flash_active()
+                .unwrap_or_default()
+                .contains("save failed"),
+            "flash: {:?}",
+            app.flash_active()
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn command_prompt_unknown_command_flashes_error_and_stays_open() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-cmd-unknown-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        handle_notes(&mut app, key('e'));
+        handle_notes(&mut app, key(':'));
+        handle_notes(&mut app, key('z'));
+        handle_notes(&mut app, key('z'));
+
+        handle_notes(&mut app, enter_key());
+
+        assert_eq!(app.flash_active(), Some("unknown command: zz"));
+        let editor = app.notes_popup.active_editor.as_ref().expect("stays open");
+        assert_eq!(editor.command_prompt(), None, "prompt closed");
+        assert_eq!(editor.mode(), NoteEditorMode::Normal);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn command_prompt_empty_enter_flashes_an_error_instead_of_a_silent_noop() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-cmd-empty-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        handle_notes(&mut app, key('e'));
+        handle_notes(&mut app, key(':'));
+
+        handle_notes(&mut app, enter_key());
+
+        assert_eq!(app.flash_active(), Some("no command"));
+        assert!(
+            app.notes_popup.active_editor.is_some(),
+            "no crash, stays open"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_literal_colon_typed_inside_an_already_open_prompt_is_ordinary_text() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-cmd-literal-colon-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        handle_notes(&mut app, key('e'));
+        handle_notes(&mut app, key(':')); // opens the prompt
+
+        handle_notes(&mut app, key(':')); // typed again, now just a character
+
+        assert_eq!(
+            app.notes_popup
+                .active_editor
+                .as_ref()
+                .expect("editor open")
+                .command_prompt(),
+            Some(":"),
+            "the second ':' is ordinary buffer text, not re-opening anything"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

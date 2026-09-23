@@ -45,7 +45,7 @@ pub use draft_overlay::{
     format_rec_value, recurrence_next_preview,
 };
 pub use flash::Flash;
-pub use note_editor::{NoteEditorMode, NoteEditorState};
+pub use note_editor::{NoteCommandResult, NoteEditorMode, NoteEditorState};
 pub use notes_popup::{NotePromptKind, NotesPopupState};
 pub use palette::CommandPaletteState;
 pub use prefs::{Layout, Prefs};

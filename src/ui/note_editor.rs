@@ -10,12 +10,25 @@
 //! is surfaced through `src/ui/status.rs`'s mode label/hint line, the same
 //! place `Mode::Insert`'s `DialogInputMode` already shows it — no bespoke
 //! mode-indicator widget here.
+//!
+//! T13 adds a `folke/noice.nvim`-style `:`-command prompt
+//! (`NoteEditorState::command_prompt`, see `src/app/note_editor.rs` and
+//! `odd/tasks/notes-popup.md`'s Round 2 exploration note): a small
+//! **rounded-border** box (`BorderType::Rounded` — deliberately different
+//! from every other box in this app, which uses plain square
+//! `Borders::ALL`, to visually match noice's actual look) near the top of
+//! `render_editor`'s own `area`, horizontally centered WITHIN it. Because
+//! `render_editor` already receives the exact contextual `Rect` for both
+//! the floating popup (`render`) and T11+T12's pinned panel
+//! (`render_pinned`), positioning it here — once — automatically centers
+//! over whichever context is actually on screen, no per-context logic
+//! needed.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 use crate::app::{App, NoteEditorState};
 use crate::theme::Theme;
@@ -155,6 +168,62 @@ pub fn render_editor(
         Paragraph::new(rendered).style(Style::default().bg(theme.panel)),
         inner,
     );
+
+    // T13: the `:`-command prompt, drawn last so it floats above the buffer
+    // text. Positioned relative to `area` (this call's own contextual
+    // Rect — the popup's box when called from `render`, the active tab's
+    // box when called from `render_pinned`), never the whole terminal.
+    if let Some(input) = editor.command_prompt() {
+        render_command_prompt(frame, area, theme, input);
+    }
+}
+
+/// A small rounded-border box near the top of `area`, horizontally centered
+/// WITHIN it (not the whole terminal) — noice.nvim's `command_palette`
+/// preset's actual look (see this module's doc comment). Clamped so it
+/// never exceeds `area`'s own bounds and degrades to a zero-size (and thus
+/// entirely skipped) rect on a pathologically small `area` rather than
+/// panicking.
+fn command_prompt_area(area: Rect) -> Rect {
+    let width = area.width.saturating_sub(2).min(40);
+    let height = area.height.min(3);
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let top_margin = if area.height > height { 1 } else { 0 };
+    let y = area.y + top_margin;
+    Rect::new(x, y, width, height)
+}
+
+/// Render the `:`-command prompt itself: a `Clear`'d, rounded-border box
+/// with a `:` prefix glyph (theme-accented, matching the app-wide convention
+/// of accenting prompt/selection markers — e.g. `dialog::render`'s `›`) then
+/// the typed input, theme-driven colors throughout (no hardcoded values).
+fn render_command_prompt(frame: &mut Frame, area: Rect, theme: &Theme, input: &str) {
+    let prompt_area = command_prompt_area(area);
+    if prompt_area.width == 0 || prompt_area.height == 0 {
+        return;
+    }
+    frame.render_widget(Clear, prompt_area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.accent).bg(theme.panel))
+        .style(Style::default().bg(theme.panel));
+    let inner = block.inner(prompt_area);
+    frame.render_widget(block, prompt_area);
+
+    let line = Line::from(vec![
+        Span::styled(
+            ":",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(input.to_string(), Style::default().fg(theme.fg)),
+    ]);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default().bg(theme.panel)),
+        inner,
+    );
 }
 
 /// Render one buffer line, highlighting the cursor's character cell (or a
@@ -221,6 +290,84 @@ mod tests {
         let path = dir.join(name);
         std::fs::write(&path, "body").expect("write note file");
         NoteEditorState::load(path, NoteEditorMode::Normal)
+    }
+
+    // ---- T13: `:`-command prompt rendering ---------------------------------
+
+    #[test]
+    fn render_editor_scopes_the_command_prompt_to_its_own_area_not_full_screen() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-note-editor-render-cmd-prompt-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let app = build_app("Buy milk\n");
+        let mut editor = note("a.md", &dir);
+        editor.open_command_prompt();
+        editor.command_prompt_push('w');
+        editor.command_prompt_push('q');
+
+        // A 60x20 terminal, but the editor itself only occupies a much
+        // smaller Rect well inside it (mirrors how the floating popup or
+        // the pinned panel is only ever part of the screen) -- proves the
+        // prompt is positioned relative to THAT Rect, not the terminal.
+        let area = Rect::new(10, 4, 30, 10);
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| render_editor(f, area, app.theme(), &editor, true))
+            .expect("draw");
+        let buf = terminal.backend().buffer();
+
+        let mut found_prompt_text = false;
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                let sym = buf[(x, y)].symbol();
+                if sym == "w" || sym == "q" {
+                    let inside_editor_area = x >= area.x
+                        && x < area.x + area.width
+                        && y >= area.y
+                        && y < area.y + area.height;
+                    assert!(
+                        inside_editor_area,
+                        "command-prompt text must stay within the editor's own \
+                         area, found '{sym}' at ({x},{y}) outside {area:?}"
+                    );
+                    found_prompt_text = true;
+                }
+            }
+        }
+        assert!(
+            found_prompt_text,
+            "command prompt text must actually render"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn render_editor_draws_no_command_prompt_when_it_is_closed() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-note-editor-render-no-cmd-prompt-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let app = build_app("Buy milk\n");
+        let editor = note("a.md", &dir);
+        assert_eq!(editor.command_prompt(), None);
+
+        // Must not panic, and must not draw the ':' prefix glyph anywhere.
+        let text = rendered_text(40, 10, |f, area| {
+            render_editor(f, area, app.theme(), &editor, true);
+        });
+        assert!(
+            !text.contains(':'),
+            "no command-prompt chrome when the prompt is closed: {text}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---- T12: tab bar only appears once there's something to distinguish --

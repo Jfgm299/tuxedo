@@ -52,11 +52,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let mut hint: std::borrow::Cow<'static, str> = if app.pinned_focus {
         match app.active_pinned_note().map(|e| e.mode()) {
             Some(NoteEditorMode::Normal) if app.pinned_notes.len() > 1 => {
-                "h/j/k/l or arrows move · i insert · Ctrl+S save · Tab/S-Tab switch tab · z unfocus · Z close tab"
+                "h/j/k/l or arrows move · i insert · : cmd · Ctrl+S save · Tab/S-Tab switch tab · z unfocus · Z close tab"
                     .into()
             }
             Some(NoteEditorMode::Normal) => {
-                "h/j/k/l or arrows move · i insert · Ctrl+S save · z unfocus · Z close pinned"
+                "h/j/k/l or arrows move · i insert · : cmd · Ctrl+S save · z unfocus · Z close pinned"
                     .into()
             }
             Some(NoteEditorMode::Insert) => {
@@ -86,7 +86,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             Mode::Welcome => "c create ./todo.txt · s open sample · q quit",
             Mode::Notes => match app.notes_popup.active_editor.as_ref().map(|e| e.mode()) {
                 Some(NoteEditorMode::Normal) => {
-                    "h/j/k/l or arrows move · i insert · Ctrl+S save · Esc back to list"
+                    "h/j/k/l or arrows move · i insert · : cmd · Ctrl+S save · Esc back to list"
                 }
                 Some(NoteEditorMode::Insert) => {
                     "type to edit · Enter newline · Ctrl+S save · Esc normal"
@@ -265,5 +265,37 @@ mod tests {
             text.contains("o notes"),
             "Normal-mode hint bar should advertise the notes action ('o notes'): {text}"
         );
+    }
+
+    /// T13: the embedded editor's Normal-sub-mode hint should advertise the
+    /// new `:`-command prompt, not just the pre-existing `Ctrl+S`.
+    #[test]
+    fn note_editor_normal_submode_hint_advertises_the_command_prompt() {
+        use crate::app::{Mode, NoteEditorMode, NoteEditorState};
+
+        let mut app = build_app();
+        let path = std::env::temp_dir().join(format!(
+            "tuxedo-status-note-editor-hint-{}.md",
+            std::process::id()
+        ));
+        std::fs::write(&path, "hello").unwrap();
+        app.notes_popup.active_editor =
+            Some(NoteEditorState::load(path.clone(), NoteEditorMode::Normal));
+        app.mode = Mode::Notes;
+
+        let backend = TestBackend::new(200, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let mut text = String::new();
+        for x in 0..buf.area.width {
+            text.push_str(buf[(x, 0)].symbol());
+        }
+        assert!(
+            text.contains(": cmd"),
+            "editor Normal-sub-mode hint should advertise ':' for the command prompt: {text}"
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 }
