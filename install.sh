@@ -17,7 +17,12 @@ fi
 echo "Building $BIN_NAME in release mode..."
 cargo build --release
 
-BUILT_BIN="target/release/$BIN_NAME"
+# Respect a custom build output location (CARGO_TARGET_DIR is the common way
+# machines/CI set this) instead of assuming ./target — cargo build honors it
+# silently, so hardcoding target/release/ here would build fine and then
+# fail to find the binary on any machine with it set.
+CARGO_OUT_DIR="${CARGO_TARGET_DIR:-target}"
+BUILT_BIN="$CARGO_OUT_DIR/release/$BIN_NAME"
 if [ ! -f "$BUILT_BIN" ]; then
   echo "error: expected $BUILT_BIN after build, but it's not there." >&2
   exit 1
