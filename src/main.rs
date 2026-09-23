@@ -13,7 +13,7 @@ use std::io::Write;
 use tuxedo::action::{Action, RecAction};
 use tuxedo::app::{
     AddOutcome, App, CalendarTarget, DialogInputMode, Mode, NoteCommandResult, NoteEditorMode,
-    NoteEditorState, OverlayKind, View,
+    NoteEditorState, NotesEntryAction, OverlayKind, PaletteDispatch, View,
 };
 use tuxedo::cli;
 use tuxedo::config::Config;
@@ -471,6 +471,11 @@ fn handle_share(app: &mut App, _key: KeyEvent) {
 /// the doc comment on `src/keybinds.rs`) and never goes through
 /// `Action`/`KeyBindings` — none of these bindings can collide with the
 /// global versions.
+///
+/// T14: `Ctrl+P` opens the command palette while plainly browsing the list
+/// (not mid-editor, mid-prompt, or mid-delete-confirm — those branches all
+/// return before this key is checked), capturing `Mode::Notes` as the prior
+/// mode so the palette's notes-specific entries become visible.
 fn handle_notes(app: &mut App, key: KeyEvent) {
     if app.notes_popup.active_editor.is_some() {
         // T11: `z` pins the note currently open in the floating editor (the
@@ -499,6 +504,23 @@ fn handle_notes(app: &mut App, key: KeyEvent) {
     }
     if app.notes_popup.pending_delete.is_some() {
         handle_notes_delete_confirm(app, key);
+        return;
+    }
+    // T14: closes the gap where the command palette was completely
+    // unreachable from `Mode::Notes` — `Ctrl+P` is normally resolved inside
+    // `resolve_normal_key`, which `handle_key` only calls for
+    // `Mode::Normal`/`Mode::Visual`. Checked here at the same level as the
+    // active-editor/prompt/pending-delete branches above (all already
+    // returned by this point), so it only fires while plainly browsing the
+    // list — not mid-edit, mid-prompt, or mid-delete-confirm. Mirrors
+    // `apply_action`'s `Action::OpenCommandPalette` arm exactly, capturing
+    // `Mode::Notes` as the prior mode so the palette's mode-aware filtering
+    // (`palette::entry_visible`) surfaces the notes-specific entries.
+    if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        let prior = app.mode;
+        app.command_palette.open(prior);
+        app.mode = Mode::CommandPalette;
+        app.draft_clear();
         return;
     }
     match key.code {
@@ -1237,15 +1259,21 @@ fn handle_command_palette(app: &mut App, key: KeyEvent) {
             return;
         }
         KeyCode::Enter => {
-            let chosen = app.command_palette.current_action();
-            // Restore the prior mode (Normal or Visual) *before* dispatching
-            // so visual-aware actions (ToggleComplete, Delete, ToggleSelected)
-            // see the selection. The dispatched action may then set its own
-            // mode (BeginAdd → Insert, etc.); we don't stomp it after.
+            let chosen = app.command_palette.current_dispatch();
+            // Restore the prior mode (Normal, Visual, or — T14 — Notes)
+            // *before* dispatching so visual-aware actions (ToggleComplete,
+            // Delete, ToggleSelected) see the selection, and so a
+            // `NotesAction` lands back in `Mode::Notes` where
+            // `app.notes_popup`'s selection is still meaningful. The
+            // dispatched action may then set its own mode (BeginAdd →
+            // Insert, etc.); we don't stomp it after.
             app.mode = app.command_palette.take_prior();
             app.draft_clear();
-            if let Some(action) = chosen {
-                apply_action(app, action);
+            if let Some(dispatch) = chosen {
+                match dispatch {
+                    PaletteDispatch::Global(action) => apply_action(app, action),
+                    PaletteDispatch::NotesAction(action) => apply_notes_palette_action(app, action),
+                }
             }
             return;
         }
@@ -1271,6 +1299,26 @@ fn handle_command_palette(app: &mut App, key: KeyEvent) {
         // `refresh` resets the cursor when the needle actually changes; a
         // same-needle call (e.g. typed-and-deleted character) is a no-op.
         app.command_palette.refresh(app.draft.text());
+    }
+}
+
+/// T14: dispatch a `NotesEntryAction` chosen from the command palette. Each
+/// variant calls the exact same `App` method `handle_notes` already calls
+/// for the matching raw keystroke (`n`/`r`/`d`/`u`/`e`/`i`) — the palette is
+/// just a second way to reach the same operation, not a new one. Operates on
+/// whatever's currently selected in `app.notes_popup`, which is already
+/// correct by the time this runs: the palette can only have offered these
+/// entries if it was opened with `Mode::Notes` as the prior mode (see
+/// `palette::entry_visible`), and `app.mode` is restored to `Mode::Notes`
+/// before this is called (see the `Enter` arm of `handle_command_palette`).
+fn apply_notes_palette_action(app: &mut App, action: NotesEntryAction) {
+    match action {
+        NotesEntryAction::Create => app.begin_new_note_prompt(),
+        NotesEntryAction::Rename => app.begin_rename_prompt(),
+        NotesEntryAction::Delete => app.begin_delete_note_confirm(),
+        NotesEntryAction::Unlink => app.unlink_selected_note(),
+        NotesEntryAction::OpenEditorNormal => app.open_note_editor_normal(),
+        NotesEntryAction::OpenEditorInsert => app.open_note_editor_insert(),
     }
 }
 
@@ -3998,6 +4046,269 @@ mod tests {
             Some(":"),
             "the second ':' is ordinary buffer text, not re-opening anything"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- T14: mode-aware command palette -----------------------------------
+
+    #[test]
+    fn handle_notes_ctrl_p_opens_command_palette_with_notes_prior_mode() {
+        // Closes the gap: before T14, Ctrl+P was only checked inside
+        // `resolve_normal_key`, which `handle_key` calls only for
+        // `Mode::Normal`/`Mode::Visual` — there was no way to open the
+        // palette while browsing the notes list at all.
+        let mut app = build_app();
+        app.mode = Mode::Notes;
+        app.notes_popup = tuxedo::app::NotesPopupState::new(vec![std::path::PathBuf::from("a.md")]);
+
+        handle_notes(&mut app, ctrl('p'));
+
+        assert_eq!(app.mode, Mode::CommandPalette);
+        assert_eq!(
+            app.command_palette.prior(),
+            Some(Mode::Notes),
+            "the palette must capture Mode::Notes as its prior mode, not Mode::Normal"
+        );
+    }
+
+    #[test]
+    fn handle_notes_ctrl_p_is_noop_while_editor_prompt_or_delete_confirm_is_active() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-ctrlp-noop-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+
+        // Mid-editor: `e` opens the embedded editor.
+        handle_notes(&mut app, key('e'));
+        assert!(app.notes_popup.active_editor.is_some());
+        handle_notes(&mut app, ctrl('p'));
+        assert_eq!(
+            app.mode,
+            Mode::Notes,
+            "Ctrl+P must not open the palette while a note is being edited"
+        );
+        assert!(
+            app.command_palette.prior().is_none(),
+            "the palette must never have been opened"
+        );
+        app.close_note_editor();
+
+        // Mid-prompt: `n` opens the inline create-note prompt.
+        handle_notes(&mut app, key('n'));
+        assert!(app.notes_popup.prompt.is_some());
+        handle_notes(&mut app, ctrl('p'));
+        assert_eq!(
+            app.mode,
+            Mode::Notes,
+            "Ctrl+P must not open the palette mid-prompt"
+        );
+        assert!(app.command_palette.prior().is_none());
+        app.cancel_note_prompt();
+
+        // Mid-delete-confirm: `d` opens the confirm sub-state.
+        handle_notes(&mut app, key('d'));
+        assert!(app.notes_popup.pending_delete.is_some());
+        handle_notes(&mut app, ctrl('p'));
+        assert_eq!(
+            app.mode,
+            Mode::Notes,
+            "Ctrl+P must not open the palette mid-delete-confirm"
+        );
+        assert!(app.command_palette.prior().is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_notes_ctrl_p_from_the_plain_list_still_reaches_the_palette() {
+        // Regression guard for the noop test above: Ctrl+P must actually work
+        // once every sub-state is closed again, not just be silently eaten.
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-ctrlp-works-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+
+        handle_notes(&mut app, ctrl('p'));
+
+        assert_eq!(app.mode, Mode::CommandPalette);
+        assert_eq!(app.command_palette.prior(), Some(Mode::Notes));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn command_palette_existing_global_entries_still_dispatch_via_apply_action() {
+        // Regression check: wrapping `Action` in `PaletteDispatch::Global`
+        // must not change how an existing entry resolves.
+        let mut app = build_app();
+        apply_action(&mut app, Action::OpenCommandPalette);
+        assert_eq!(app.mode, Mode::CommandPalette);
+
+        app.command_palette.refresh("new task");
+        assert_eq!(
+            app.command_palette.current_dispatch(),
+            Some(PaletteDispatch::Global(Action::BeginAdd))
+        );
+        handle_command_palette(&mut app, enter_key());
+        assert_eq!(
+            app.mode,
+            Mode::Insert,
+            "BeginAdd must still fire through apply_action after the PaletteDispatch wrap"
+        );
+    }
+
+    #[test]
+    fn command_palette_quit_entry_still_dispatches_via_apply_action() {
+        let mut app = build_app();
+        apply_action(&mut app, Action::OpenCommandPalette);
+        app.command_palette.refresh("quit");
+        assert_eq!(
+            app.command_palette.current_dispatch(),
+            Some(PaletteDispatch::Global(Action::Quit))
+        );
+        handle_command_palette(&mut app, enter_key());
+        assert!(app.should_quit, "quit must still fire through apply_action");
+    }
+
+    #[test]
+    fn command_palette_hides_notes_entries_when_opened_from_normal_mode() {
+        let mut app = build_app();
+        apply_action(&mut app, Action::OpenCommandPalette);
+        assert_eq!(app.command_palette.prior(), Some(Mode::Normal));
+
+        app.command_palette.refresh("create note");
+        assert!(
+            app.command_palette.hits().is_empty(),
+            "the notes-only 'create note' entry must not be reachable when the palette was opened from Mode::Normal"
+        );
+    }
+
+    #[test]
+    fn command_palette_create_note_entry_calls_begin_new_note_prompt_end_to_end() {
+        let mut app = build_app();
+        app.mode = Mode::Notes;
+        app.notes_popup = tuxedo::app::NotesPopupState::new(vec![std::path::PathBuf::from("a.md")]);
+
+        handle_notes(&mut app, ctrl('p'));
+        assert_eq!(app.mode, Mode::CommandPalette);
+
+        app.command_palette.refresh("create note");
+        assert_eq!(
+            app.command_palette.current_dispatch(),
+            Some(PaletteDispatch::NotesAction(NotesEntryAction::Create)),
+            "typing the exact label must resolve to the create-note entry"
+        );
+
+        handle_command_palette(&mut app, enter_key());
+
+        assert_eq!(
+            app.mode,
+            Mode::Notes,
+            "the palette restores Mode::Notes (its captured prior) before dispatching"
+        );
+        assert_eq!(
+            app.notes_popup.prompt,
+            Some(String::new()),
+            "selecting 'create note' must call begin_new_note_prompt, same as pressing 'n' directly from the list"
+        );
+    }
+
+    #[test]
+    fn command_palette_delete_note_entry_opens_confirm_not_immediate_delete() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-palette-delete-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        handle_notes(&mut app, ctrl('p'));
+        app.command_palette.refresh("delete note");
+        assert_eq!(
+            app.command_palette.current_dispatch(),
+            Some(PaletteDispatch::NotesAction(NotesEntryAction::Delete))
+        );
+        handle_command_palette(&mut app, enter_key());
+
+        assert_eq!(app.mode, Mode::Notes);
+        assert_eq!(
+            app.notes_popup.pending_delete,
+            Some(0),
+            "selecting 'delete note' must open the confirm sub-state, same as 'd', not delete immediately"
+        );
+        assert!(
+            notes_folder.join("a.md").exists(),
+            "the file must still exist until 'y' confirms"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn command_palette_unlink_note_entry_calls_unlink_selected_note_end_to_end() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-palette-unlink-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+
+        handle_notes(&mut app, ctrl('p'));
+        app.command_palette.refresh("unlink note");
+        assert_eq!(
+            app.command_palette.current_dispatch(),
+            Some(PaletteDispatch::NotesAction(NotesEntryAction::Unlink))
+        );
+        handle_command_palette(&mut app, enter_key());
+
+        assert!(
+            !notes_folder.join("a.md").exists(),
+            "unlink must move the file out of the task's folder, same as pressing 'u' directly"
+        );
+        assert_eq!(app.notes_popup.files, vec![notes_folder.join("b.md")]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn command_palette_open_note_in_editor_normal_entry_matches_e_key() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-palette-open-editor-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+
+        handle_notes(&mut app, ctrl('p'));
+        app.command_palette
+            .refresh("open note in editor (normal mode)");
+        assert_eq!(
+            app.command_palette.current_dispatch(),
+            Some(PaletteDispatch::NotesAction(
+                NotesEntryAction::OpenEditorNormal
+            ))
+        );
+        handle_command_palette(&mut app, enter_key());
+
+        let editor = app
+            .notes_popup
+            .active_editor
+            .as_ref()
+            .expect("editor opened");
+        assert_eq!(editor.mode(), NoteEditorMode::Normal);
+        assert_eq!(editor.lines(), &["content a"]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

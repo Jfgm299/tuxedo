@@ -47,7 +47,7 @@ pub use draft_overlay::{
 pub use flash::Flash;
 pub use note_editor::{NoteCommandResult, NoteEditorMode, NoteEditorState};
 pub use notes_popup::{NotePromptKind, NotesPopupState};
-pub use palette::CommandPaletteState;
+pub use palette::{CommandPaletteState, NotesEntryAction, PaletteDispatch};
 pub use prefs::{Layout, Prefs};
 pub use selection::Selection;
 pub use types::{
