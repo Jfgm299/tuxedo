@@ -92,7 +92,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     "type to edit · Enter newline · Ctrl+S save · Esc normal"
                 }
                 None => {
-                    "j/k navigate · e/i edit · n new · r rename · d delete · u unlink · Esc close"
+                    "j/k navigate · e/i edit · z zoom · n new · r rename · d delete · u unlink · Esc close"
                 }
             },
             _ => {
@@ -297,5 +297,29 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// User feedback: the notes-list browsing hint (no active editor) didn't
+    /// mention `z`, even though it's usable directly from the list (pins the
+    /// selected note straight to the side panel — `App::pin_selected_note_directly`).
+    #[test]
+    fn notes_list_browsing_hint_advertises_z_zoom() {
+        use crate::app::Mode;
+
+        let mut app = build_app();
+        app.mode = Mode::Notes;
+
+        let backend = TestBackend::new(200, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let mut text = String::new();
+        for x in 0..buf.area.width {
+            text.push_str(buf[(x, 0)].symbol());
+        }
+        assert!(
+            text.contains("z zoom"),
+            "notes-list browsing hint should advertise 'z zoom': {text}"
+        );
     }
 }
