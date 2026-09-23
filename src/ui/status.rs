@@ -50,7 +50,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // it can't drive the hint on its own; check `pinned_focus` ahead of the
     // per-mode match instead of trying to fold it into that match's arms.
     let mut hint: std::borrow::Cow<'static, str> = if app.pinned_focus {
-        match app.pinned_note.as_ref().map(|e| e.mode()) {
+        match app.active_pinned_note().map(|e| e.mode()) {
+            Some(NoteEditorMode::Normal) if app.pinned_notes.len() > 1 => {
+                "h/j/k/l or arrows move · i insert · Ctrl+S save · Tab/S-Tab switch tab · z unfocus · Z close tab"
+                    .into()
+            }
             Some(NoteEditorMode::Normal) => {
                 "h/j/k/l or arrows move · i insert · Ctrl+S save · z unfocus · Z close pinned"
                     .into()
@@ -100,7 +104,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // A note pinned-but-unfocused still needs `Z` surfaced somewhere — it's
     // not covered by any per-mode arm above since the user could be in
     // almost any mode while it sits docked in the background.
-    if !app.pinned_focus && app.pinned_note.is_some() {
+    if !app.pinned_focus && !app.pinned_notes.is_empty() {
         hint = format!("{hint} · Z close pinned").into();
     }
 

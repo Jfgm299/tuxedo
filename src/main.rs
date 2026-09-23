@@ -348,15 +348,19 @@ fn handle_key(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) {
     // rendering normally underneath. That means the ordinary `match
     // app.mode` dispatch below *can't* tell "focus is on the pinned note"
     // apart from "focus is on the main list"; this early branch is what
-    // does, routing every key to the pinned note's own Normal/Insert
+    // does, routing every key to the active pinned tab's own Normal/Insert
     // sub-mode instead. `z`/`Z` (`Action::TogglePinFocus`/`ClosePinnedNote`)
     // are checked first so they stay reachable to exit focus (or close the
-    // pin outright) — but only while the pinned note's own sub-mode is
+    // active tab outright) — but only while the active tab's own sub-mode is
     // Normal: in Insert sub-mode `z`/`Z` are ordinary typed characters,
     // matching how this app never lets a global Action key interrupt typing
     // in any other text-input context (Mode::Insert, Search, prompts, …).
+    // T12: `Tab`/`BackTab` cycle the active tab, same Normal-sub-mode-only
+    // restriction — deliberately NOT global `Action`s (see the doc comment
+    // on `src/app/pinned_note.rs`), checked here the same
+    // popup-internal-style way `handle_notes` below checks `n`/`r`/`d`/`u`.
     if app.pinned_focus {
-        let editor_mode = app.pinned_note.as_ref().map(|e| e.mode());
+        let editor_mode = app.active_pinned_note().map(|e| e.mode());
         if editor_mode == Some(NoteEditorMode::Normal) {
             match key.code {
                 KeyCode::Char('z') => {
@@ -365,6 +369,14 @@ fn handle_key(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) {
                 }
                 KeyCode::Char('Z') => {
                     app.close_pinned_note();
+                    return;
+                }
+                KeyCode::Tab => {
+                    app.cycle_pinned_note(true);
+                    return;
+                }
+                KeyCode::BackTab => {
+                    app.cycle_pinned_note(false);
                     return;
                 }
                 _ => {}
@@ -535,19 +547,20 @@ fn handle_note_editor(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// T11: the pinned/docked note while it has keyboard focus
-/// (`app.pinned_focus`), routed here by the early branch in `handle_key`
-/// instead of the `Mode::Notes` path above — reuses the exact same
-/// `handle_note_editor_normal`/`_insert` functions the floating popup uses,
-/// operating on `app.pinned_note` instead of
+/// T11 (extended by T12 to multiple tabs): the active pinned/docked note
+/// while it has keyboard focus (`app.pinned_focus`), routed here by the
+/// early branch in `handle_key` instead of the `Mode::Notes` path above —
+/// reuses the exact same `handle_note_editor_normal`/`_insert` functions the
+/// floating popup uses, operating on `app.active_pinned_note_mut()`
+/// (`app.pinned_notes[app.active_pin]`) instead of
 /// `app.notes_popup.active_editor`. `editor_mode` is passed in by the caller
-/// (which already read it to decide whether `z`/`Z` should be intercepted as
-/// global actions ahead of this call) rather than re-reading it here.
+/// (which already read it to decide whether `z`/`Z`/`Tab`/`BackTab` should be
+/// intercepted ahead of this call) rather than re-reading it here.
 fn handle_pinned_note_key(app: &mut App, key: KeyEvent, editor_mode: Option<NoteEditorMode>) {
     let Some(mode) = editor_mode else {
         return;
     };
-    let Some(editor) = app.pinned_note.as_mut() else {
+    let Some(editor) = app.active_pinned_note_mut() else {
         return;
     };
     let signal = match mode {
@@ -3102,7 +3115,7 @@ mod tests {
             app.notes_popup.active_editor.is_none(),
             "moved out of the popup"
         );
-        assert!(app.pinned_note.is_some(), "note now pinned");
+        assert!(!app.pinned_notes.is_empty(), "note now pinned");
         assert!(app.pinned_focus, "newly pinned note gets focus");
         assert_eq!(app.mode, Mode::Normal, "popup closes to Mode::Normal");
 
@@ -3115,7 +3128,7 @@ mod tests {
 
         handle_key(&mut app, key('z'), &KeyBindings::default());
 
-        assert!(app.pinned_note.is_none());
+        assert!(app.pinned_notes.is_empty());
         assert!(!app.pinned_focus);
     }
 
@@ -3125,7 +3138,7 @@ mod tests {
 
         handle_key(&mut app, key('Z'), &KeyBindings::default());
 
-        assert!(app.pinned_note.is_none());
+        assert!(app.pinned_notes.is_empty());
         assert!(!app.pinned_focus);
     }
 
@@ -3146,7 +3159,7 @@ mod tests {
         handle_key(&mut app, key('z'), &KeyBindings::default());
         assert!(!app.pinned_focus, "focus moves back to the main app");
         assert!(
-            app.pinned_note.is_some(),
+            !app.pinned_notes.is_empty(),
             "note stays pinned, just unfocused"
         );
 
@@ -3172,7 +3185,7 @@ mod tests {
 
         handle_key(&mut app, key('Z'), &KeyBindings::default());
 
-        assert!(app.pinned_note.is_none(), "pin removed entirely");
+        assert!(app.pinned_notes.is_empty(), "pin removed entirely");
         assert!(!app.pinned_focus);
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -3192,7 +3205,7 @@ mod tests {
 
         handle_key(&mut app, key('Z'), &KeyBindings::default());
 
-        assert!(app.pinned_note.is_none(), "pin removed entirely");
+        assert!(app.pinned_notes.is_empty(), "pin removed entirely");
         assert!(!app.pinned_focus);
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -3254,7 +3267,7 @@ mod tests {
             Mode::Insert,
             "main list keys must work normally while pinned but unfocused"
         );
-        assert!(app.pinned_note.is_some(), "note remains pinned");
+        assert!(!app.pinned_notes.is_empty(), "note remains pinned");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3279,7 +3292,7 @@ mod tests {
         assert!(app.pinned_focus);
         assert!(app.notes_popup.active_editor.is_none());
         assert_eq!(
-            app.pinned_note.as_ref().expect("pinned").mode(),
+            app.active_pinned_note().expect("pinned").mode(),
             NoteEditorMode::Normal
         );
 
@@ -3287,7 +3300,7 @@ mod tests {
         // reaches the same `enter_insert` the floating popup's `i` does.
         handle_key(&mut app, key('i'), &KeyBindings::default());
         assert_eq!(
-            app.pinned_note.as_ref().expect("pinned").mode(),
+            app.active_pinned_note().expect("pinned").mode(),
             NoteEditorMode::Insert
         );
 
@@ -3309,7 +3322,7 @@ mod tests {
         );
 
         assert_eq!(
-            app.pinned_note.as_ref().expect("still pinned").lines(),
+            app.active_pinned_note().expect("still pinned").lines(),
             &["hi", "ther"]
         );
 
@@ -3318,6 +3331,205 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(notes_folder.join("a.md")).expect("read back"),
             "hi\nther\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- T12: multiple pinned notes as tabs, with a cycle shortcut --------
+
+    fn tab_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)
+    }
+
+    fn back_tab_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)
+    }
+
+    /// Builds an `App` (real `notes_dir`, real files on disk, via
+    /// `build_notes_app_with_two_files`) with BOTH `a.md` and `b.md` pinned
+    /// as tabs (`a.md` = tab 0, `b.md` = tab 1, active), driven entirely
+    /// through `handle_notes`/`handle_key` full key routing (open, pin,
+    /// reopen the popup via `o`, select the second file, open, pin again) —
+    /// exercises the real "pin a second note while one is already pinned
+    /// adds a tab" path, not a hand-assembled `Vec`.
+    fn build_notes_app_with_two_pinned_tabs(dir: &std::path::Path) -> App {
+        let mut app = build_notes_app_with_two_files(dir);
+        handle_notes(&mut app, key('e')); // open a.md (cursor starts at 0)
+        handle_notes(&mut app, key('z')); // pin a.md as tab 0, focused
+        assert_eq!(app.pinned_notes.len(), 1);
+        assert_eq!(app.mode, Mode::Normal);
+        // `o` while pinned_focus is true routes into the pinned editor's own
+        // Normal sub-mode (an unbound key there, a no-op) instead of
+        // reopening the popup -- unfocus first, exactly like a real user
+        // pressing `z` to hand focus back to the main app before navigating
+        // it, so `o` reaches the ordinary Mode::Normal dispatch.
+        handle_key(&mut app, key('z'), &KeyBindings::default());
+        assert!(!app.pinned_focus, "focus handed back to the main app");
+
+        handle_key(&mut app, key('o'), &KeyBindings::default()); // reopen popup
+        assert_eq!(app.mode, Mode::Notes);
+        handle_notes(&mut app, key('j')); // select b.md
+        handle_notes(&mut app, key('e')); // open b.md
+        handle_notes(&mut app, key('z')); // pin b.md as tab 1, active, focused
+
+        assert_eq!(app.pinned_notes.len(), 2);
+        assert_eq!(app.active_pin, 1);
+        assert!(app.pinned_focus);
+        app
+    }
+
+    #[test]
+    fn handle_key_tab_and_backtab_cycle_pinned_notes_with_three_tabs_wrapping() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-cycle-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_pinned_tabs(&dir);
+        // Add a third tab by re-pinning a.md again (a distinct `.md` file
+        // isn't required for cycling itself -- pin count/order is what's
+        // under test here). Unfocus first so `o` reaches the popup instead
+        // of the pinned editor's own Normal sub-mode (see the doc comment
+        // on `build_notes_app_with_two_pinned_tabs`).
+        handle_key(&mut app, key('z'), &KeyBindings::default());
+        handle_key(&mut app, key('o'), &KeyBindings::default());
+        handle_notes(&mut app, key('e')); // a.md, cursor is back at 0
+        handle_notes(&mut app, key('z')); // pin as tab 2, active
+        assert_eq!(app.pinned_notes.len(), 3);
+        assert_eq!(app.active_pin, 2);
+
+        handle_key(&mut app, tab_key(), &KeyBindings::default());
+        assert_eq!(app.active_pin, 0, "Tab wraps forward from the last tab");
+
+        handle_key(&mut app, tab_key(), &KeyBindings::default());
+        assert_eq!(app.active_pin, 1);
+
+        handle_key(&mut app, back_tab_key(), &KeyBindings::default());
+        assert_eq!(app.active_pin, 0);
+
+        handle_key(&mut app, back_tab_key(), &KeyBindings::default());
+        assert_eq!(
+            app.active_pin, 2,
+            "BackTab wraps backward from the first tab"
+        );
+
+        assert!(app.pinned_focus, "cycling never drops focus");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_key_tab_is_noop_when_pinned_focus_is_false() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-cycle-unfocused-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_pinned_tabs(&dir);
+        app.pinned_focus = false; // main app has focus, still 2 tabs pinned
+
+        // Tab must fall through to whatever ordinary Mode::Normal dispatch
+        // does with it (nothing bound) rather than the pinned-note cycling
+        // branch, since that branch is gated on pinned_focus.
+        handle_key(&mut app, tab_key(), &KeyBindings::default());
+
+        assert_eq!(app.active_pin, 1, "no cycling happened while unfocused");
+        assert_eq!(app.mode, Mode::Normal);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_key_tab_is_noop_with_zero_or_one_pinned_notes_and_never_panics() {
+        // Zero pinned notes: pinned_focus is always false in that state (see
+        // App::close_pinned_note), so Tab can't even reach the cycling
+        // branch -- asserted here as a belt-and-suspenders no-panic check.
+        let mut app = build_app();
+        handle_key(&mut app, tab_key(), &KeyBindings::default());
+        handle_key(&mut app, back_tab_key(), &KeyBindings::default());
+        assert!(app.pinned_notes.is_empty());
+
+        // One pinned note, focused: Tab/BackTab reach the cycling branch
+        // (editor_mode is Normal) but App::cycle_pinned_note no-ops with
+        // fewer than two tabs -- must not panic or change active_pin.
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-cycle-single-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_open_editor(&dir);
+        handle_key(&mut app, key('z'), &KeyBindings::default()); // pin, focused
+        assert_eq!(app.pinned_notes.len(), 1);
+
+        handle_key(&mut app, tab_key(), &KeyBindings::default());
+        handle_key(&mut app, back_tab_key(), &KeyBindings::default());
+
+        assert_eq!(app.active_pin, 0);
+        assert_eq!(app.pinned_notes.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_key_shift_z_with_two_pinned_notes_removes_only_the_active_tab() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-close-one-of-two-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_pinned_tabs(&dir);
+        assert_eq!(app.active_pin, 1, "tab 1 (b.md) is active");
+
+        handle_key(&mut app, key('Z'), &KeyBindings::default());
+
+        assert_eq!(
+            app.pinned_notes.len(),
+            1,
+            "exactly one tab removed, not the whole collection"
+        );
+        let remaining_name = app.pinned_notes[0]
+            .path()
+            .file_name()
+            .expect("has a name")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(remaining_name, "a.md", "the other tab survives untouched");
+        assert!(app.active_pin < app.pinned_notes.len());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn typing_on_the_active_tab_does_not_touch_the_other_pinned_tab() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-typing-multi-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_pinned_tabs(&dir);
+        assert_eq!(app.active_pin, 1, "b.md tab is active and focused");
+        assert_eq!(app.pinned_notes[0].lines(), &["content a"]);
+        assert_eq!(app.pinned_notes[1].lines(), &["content b"]);
+
+        handle_key(&mut app, key('i'), &KeyBindings::default());
+        for c in "XYZ".chars() {
+            handle_key(&mut app, key(c), &KeyBindings::default());
+        }
+
+        assert_eq!(
+            app.pinned_notes[1].lines(),
+            &["XYZcontent b"],
+            "typing landed on the active tab"
+        );
+        assert_eq!(
+            app.pinned_notes[0].lines(),
+            &["content a"],
+            "the other, inactive tab is untouched"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

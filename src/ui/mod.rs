@@ -62,12 +62,13 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Determine pane widths. Sidebars apply to every view; navigation +
     // detail pane track the cursor regardless of which view is active.
     let show_left = app.prefs.layout.left;
-    // A pinned note (T11) forces the right column visible even when the
-    // user's `show_right` preference is off — pinning doesn't touch that
-    // preference at all, it just visually overrides it while active. The
-    // column reverts to plain `show_right` automatically once unpinned,
-    // since this `||` is recomputed fresh every frame.
-    let pinned = app.pinned_note.is_some();
+    // A pinned note (T11, extended to multiple tabs by T12) forces the right
+    // column visible even when the user's `show_right` preference is off —
+    // pinning doesn't touch that preference at all, it just visually
+    // overrides it while active. The column reverts to plain `show_right`
+    // automatically once the last tab is closed, since this `||` is
+    // recomputed fresh every frame from `pinned_notes.is_empty()`.
+    let pinned = !app.pinned_notes.is_empty();
     let show_right = app.prefs.layout.right || pinned;
     let left_w = if show_left { LEFT_PANE_W } else { 0 };
     let right_w = right_pane_width(show_right, pinned, body_area.width, left_w);
@@ -99,9 +100,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
         View::Archive => archive::render(frame, center_area, app),
     }
     if let Some(ra) = right_area {
-        match app.pinned_note.as_ref() {
-            Some(pinned) => note_editor::render_editor(frame, ra, theme, pinned, app.pinned_focus),
-            None => detail::render(frame, ra, app),
+        if app.pinned_notes.is_empty() {
+            detail::render(frame, ra, app);
+        } else {
+            note_editor::render_pinned(frame, ra, theme, app);
         }
     }
 
@@ -371,7 +373,7 @@ mod tests {
             "nothing pinned yet, and show_right is off: file name must not appear"
         );
 
-        app.pinned_note = Some(NoteEditorState::load(
+        app.pinned_notes.push(NoteEditorState::load(
             note_path.clone(),
             NoteEditorMode::Normal,
         ));

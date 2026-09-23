@@ -167,20 +167,28 @@ pub struct App {
     /// by the read-only notes popup); kept for now as it may still be useful
     /// once a later task wires an "open in $EDITOR" fallback.
     pending_editor_path: Option<PathBuf>,
-    /// The note currently docked in the right-pane slot (`z`/T11's
-    /// tmux-pane-style pin), or `None` when nothing is pinned. Lives at the
-    /// top level (not nested inside `NotesPopupState`/`Mode::Notes`) because
-    /// it must survive `Mode` changes and keep rendering regardless of the
-    /// current mode — the whole point of pinning is that the rest of the app
-    /// stays usable underneath/beside it. See `src/app/pinned_note.rs`.
-    pub pinned_note: Option<NoteEditorState>,
-    /// `true` while keyboard focus is routed to `pinned_note` instead of
-    /// whatever `app.mode` would normally handle (see
+    /// The notes docked in the right-pane slot as an ordered collection of
+    /// tabs (`z`/T11's tmux-pane-style pin, extended by T12 into multiple
+    /// tabs), empty when nothing is pinned. Lives at the top level (not
+    /// nested inside `NotesPopupState`/`Mode::Notes`) because it must
+    /// survive `Mode` changes and keep rendering regardless of the current
+    /// mode — the whole point of pinning is that the rest of the app stays
+    /// usable underneath/beside it. See `src/app/pinned_note.rs`.
+    pub pinned_notes: Vec<NoteEditorState>,
+    /// Index into `pinned_notes` of the tab currently active (rendered, and
+    /// receiving keystrokes when `pinned_focus` is set). Meaningless (and
+    /// left at 0) when `pinned_notes` is empty — mirrors the same convention
+    /// `NotesPopupState::cursor`/`selected_index` already use; callers use
+    /// `App::active_pinned_note`/`_mut` rather than indexing directly so the
+    /// empty case can never panic.
+    pub active_pin: usize,
+    /// `true` while keyboard focus is routed to the active pinned tab
+    /// instead of whatever `app.mode` would normally handle (see
     /// `main.rs::handle_key`'s early routing branch). `app.mode` itself
     /// stays `Mode::Normal` throughout pinning — this flag is what
     /// distinguishes "focus on the pinned note" from "focus on the main
-    /// list" since `Mode` alone can't. Always `false` when `pinned_note` is
-    /// `None`.
+    /// list" since `Mode` alone can't. Always `false` when `pinned_notes` is
+    /// empty.
     pub pinned_focus: bool,
     /// Theme index captured when the theme picker opened, so cancel
     /// can restore it.
@@ -246,7 +254,8 @@ impl App {
             notes_dir: note_dir,
             notes_popup: NotesPopupState::default(),
             pending_editor_path: None,
-            pinned_note: None,
+            pinned_notes: Vec::new(),
+            active_pin: 0,
             pinned_focus: false,
             theme_pick_orig: 0,
             week_start: WeekStart::Sunday,
