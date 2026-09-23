@@ -62,9 +62,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Determine pane widths. Sidebars apply to every view; navigation +
     // detail pane track the cursor regardless of which view is active.
     let show_left = app.prefs.layout.left;
-    let show_right = app.prefs.layout.right;
+    // A pinned note (T11) forces the right column visible even when the
+    // user's `show_right` preference is off — pinning doesn't touch that
+    // preference at all, it just visually overrides it while active. The
+    // column reverts to plain `show_right` automatically once unpinned,
+    // since this `||` is recomputed fresh every frame.
+    let pinned = app.pinned_note.is_some();
+    let show_right = app.prefs.layout.right || pinned;
     let left_w = if show_left { LEFT_PANE_W } else { 0 };
-    let right_w = if show_right { RIGHT_PANE_W } else { 0 };
+    let right_w = right_pane_width(show_right, pinned, body_area.width, left_w);
 
     let constraints = match (show_left, show_right) {
         (true, true) => vec![
@@ -93,7 +99,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
         View::Archive => archive::render(frame, center_area, app),
     }
     if let Some(ra) = right_area {
-        detail::render(frame, ra, app);
+        match app.pinned_note.as_ref() {
+            Some(pinned) => note_editor::render_editor(frame, ra, theme, pinned, app.pinned_focus),
+            None => detail::render(frame, ra, app),
+        }
     }
 
     if app.prefs.layout.status_bar {
@@ -197,6 +206,30 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // breaks ratatui's diff width calculation — keep cell symbols pristine.
 }
 
+/// The right column's width for `draw()`'s `Layout::horizontal` split.
+/// `show_right` is the *effective* visibility (`prefs.layout.right ||
+/// pinned`, computed by the caller) — this function only decides *how wide*,
+/// given it's already visible. A pinned note (T11) gets roughly half the
+/// body width instead of the fixed `RIGHT_PANE_W`, clamped so the center
+/// list never gets pushed below its own `MIN_BODY_W` floor. All saturating
+/// arithmetic: a very narrow terminal degrades to a 0-width (invisible)
+/// pinned column instead of panicking on a u16 underflow.
+pub(crate) fn right_pane_width(
+    show_right: bool,
+    pinned: bool,
+    body_width: u16,
+    left_w: u16,
+) -> u16 {
+    if !show_right {
+        return 0;
+    }
+    if !pinned {
+        return RIGHT_PANE_W;
+    }
+    let ceiling = body_width.saturating_sub(left_w).saturating_sub(MIN_BODY_W);
+    (body_width / 2).min(ceiling)
+}
+
 pub(crate) fn centered_in(parent: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(parent.width);
     let h = h.min(parent.height);
@@ -249,7 +282,114 @@ pub(crate) fn keep_cursor_visible(
 
 #[cfg(test)]
 mod tests {
-    use super::keep_cursor_visible;
+    use super::{keep_cursor_visible, right_pane_width};
+
+    // ---- T11: right-pane width for a pinned note --------------------------
+
+    #[test]
+    fn right_pane_width_is_zero_when_not_shown_regardless_of_pinned() {
+        assert_eq!(right_pane_width(false, false, 200, 0), 0);
+        assert_eq!(right_pane_width(false, true, 200, 0), 0);
+    }
+
+    #[test]
+    fn right_pane_width_is_fixed_when_shown_and_not_pinned() {
+        assert_eq!(right_pane_width(true, false, 200, 0), super::RIGHT_PANE_W);
+        assert_eq!(right_pane_width(true, false, 200, 26), super::RIGHT_PANE_W);
+    }
+
+    #[test]
+    fn right_pane_width_is_roughly_half_body_when_pinned() {
+        assert_eq!(right_pane_width(true, true, 100, 0), 50);
+        assert_eq!(right_pane_width(true, true, 200, 0), 100);
+    }
+
+    #[test]
+    fn right_pane_width_when_pinned_never_pushes_center_below_min_body_w() {
+        // body 100, left 26: half of 100 is 50, but 100 - 26 - MIN_BODY_W(40)
+        // = 34 is the ceiling, so the clamp (not the naive half) must win.
+        let w = right_pane_width(true, true, 100, 26);
+        assert_eq!(w, 34);
+        assert!(
+            26 + super::MIN_BODY_W + w <= 100,
+            "left + center floor + right must fit: {w}"
+        );
+    }
+
+    #[test]
+    fn right_pane_width_when_pinned_degrades_to_zero_on_a_very_narrow_terminal_without_panicking() {
+        // body narrower than left_w + MIN_BODY_W: saturating arithmetic must
+        // clamp to 0, never underflow/panic.
+        let w = right_pane_width(true, true, 30, 26);
+        assert_eq!(w, 0);
+    }
+
+    // ---- T11: pinned note actually renders in the right column -----------
+
+    #[test]
+    fn pinned_note_renders_in_right_column_even_when_show_right_pref_is_off_and_reverts_after_unpin()
+     {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        use crate::app::{App, NoteEditorMode, NoteEditorState};
+        use crate::config::Config;
+
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-ui-pin-render-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let todo_path = dir.join("todo.txt");
+        let body = "(A) Buy milk\n".to_string();
+        std::fs::write(&todo_path, &body).expect("write todo.txt");
+        let note_path = dir.join("pinned-note.md");
+        std::fs::write(&note_path, "pinned note body").expect("write note");
+
+        let mut app = App::new(todo_path, body, "2026-05-06".to_string(), Config::default());
+        app.prefs.toggle_right(); // show_right preference off
+        assert!(!app.prefs.layout.right, "precondition: pref is off");
+
+        let render_text = |app: &App| -> String {
+            let backend = TestBackend::new(120, 20);
+            let mut terminal = Terminal::new(backend).expect("terminal");
+            terminal.draw(|f| super::draw(f, app)).expect("draw");
+            let buf = terminal.backend().buffer();
+            let mut text = String::new();
+            for y in 0..buf.area.height {
+                for x in 0..buf.area.width {
+                    text.push_str(buf[(x, y)].symbol());
+                }
+            }
+            text
+        };
+
+        let before = render_text(&app);
+        assert!(
+            !before.contains("pinned-note.md"),
+            "nothing pinned yet, and show_right is off: file name must not appear"
+        );
+
+        app.pinned_note = Some(NoteEditorState::load(
+            note_path.clone(),
+            NoteEditorMode::Normal,
+        ));
+        let while_pinned = render_text(&app);
+        assert!(
+            while_pinned.contains("pinned-note.md"),
+            "right column must render the pinned note even though show_right is off: {while_pinned}"
+        );
+
+        app.close_pinned_note();
+        let after = render_text(&app);
+        assert!(
+            !after.contains("pinned-note.md"),
+            "right column must revert to show_right's own (off) state after unpinning: {after}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn no_scroll_when_content_fits() {

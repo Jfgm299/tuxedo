@@ -23,6 +23,7 @@ mod note_editor;
 mod notes_popup;
 pub mod palette;
 mod picker;
+mod pinned_note;
 mod prefs;
 mod saved;
 mod selection;
@@ -166,6 +167,21 @@ pub struct App {
     /// by the read-only notes popup); kept for now as it may still be useful
     /// once a later task wires an "open in $EDITOR" fallback.
     pending_editor_path: Option<PathBuf>,
+    /// The note currently docked in the right-pane slot (`z`/T11's
+    /// tmux-pane-style pin), or `None` when nothing is pinned. Lives at the
+    /// top level (not nested inside `NotesPopupState`/`Mode::Notes`) because
+    /// it must survive `Mode` changes and keep rendering regardless of the
+    /// current mode — the whole point of pinning is that the rest of the app
+    /// stays usable underneath/beside it. See `src/app/pinned_note.rs`.
+    pub pinned_note: Option<NoteEditorState>,
+    /// `true` while keyboard focus is routed to `pinned_note` instead of
+    /// whatever `app.mode` would normally handle (see
+    /// `main.rs::handle_key`'s early routing branch). `app.mode` itself
+    /// stays `Mode::Normal` throughout pinning — this flag is what
+    /// distinguishes "focus on the pinned note" from "focus on the main
+    /// list" since `Mode` alone can't. Always `false` when `pinned_note` is
+    /// `None`.
+    pub pinned_focus: bool,
     /// Theme index captured when the theme picker opened, so cancel
     /// can restore it.
     theme_pick_orig: usize,
@@ -230,6 +246,8 @@ impl App {
             notes_dir: note_dir,
             notes_popup: NotesPopupState::default(),
             pending_editor_path: None,
+            pinned_note: None,
+            pinned_focus: false,
             theme_pick_orig: 0,
             week_start: WeekStart::Sunday,
         };

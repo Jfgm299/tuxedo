@@ -12,7 +12,8 @@ use std::io::Write;
 
 use tuxedo::action::{Action, RecAction};
 use tuxedo::app::{
-    AddOutcome, App, CalendarTarget, DialogInputMode, Mode, NoteEditorMode, OverlayKind, View,
+    AddOutcome, App, CalendarTarget, DialogInputMode, Mode, NoteEditorMode, NoteEditorState,
+    OverlayKind, View,
 };
 use tuxedo::cli;
 use tuxedo::config::Config;
@@ -340,6 +341,39 @@ fn handle_key(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) {
     if !app.check_external_changes() {
         return;
     }
+
+    // T11: while the pinned note has keyboard focus, `app.mode` stays
+    // `Mode::Normal` throughout (see `src/app/pinned_note.rs`'s doc
+    // comment) — it never changes, precisely so the rest of the app keeps
+    // rendering normally underneath. That means the ordinary `match
+    // app.mode` dispatch below *can't* tell "focus is on the pinned note"
+    // apart from "focus is on the main list"; this early branch is what
+    // does, routing every key to the pinned note's own Normal/Insert
+    // sub-mode instead. `z`/`Z` (`Action::TogglePinFocus`/`ClosePinnedNote`)
+    // are checked first so they stay reachable to exit focus (or close the
+    // pin outright) — but only while the pinned note's own sub-mode is
+    // Normal: in Insert sub-mode `z`/`Z` are ordinary typed characters,
+    // matching how this app never lets a global Action key interrupt typing
+    // in any other text-input context (Mode::Insert, Search, prompts, …).
+    if app.pinned_focus {
+        let editor_mode = app.pinned_note.as_ref().map(|e| e.mode());
+        if editor_mode == Some(NoteEditorMode::Normal) {
+            match key.code {
+                KeyCode::Char('z') => {
+                    app.toggle_pin_focus();
+                    return;
+                }
+                KeyCode::Char('Z') => {
+                    app.close_pinned_note();
+                    return;
+                }
+                _ => {}
+            }
+        }
+        handle_pinned_note_key(app, key, editor_mode);
+        return;
+    }
+
     match app.mode {
         Mode::Insert => handle_insert(app, key, keybinds),
         Mode::Search => handle_search(app, key),
@@ -419,6 +453,19 @@ fn handle_share(app: &mut App, _key: KeyEvent) {
 /// global versions.
 fn handle_notes(app: &mut App, key: KeyEvent) {
     if app.notes_popup.active_editor.is_some() {
+        // T11: `z` pins the note currently open in the floating editor (the
+        // only place pinning can start from — see `App::toggle_pin_focus`'s
+        // doc comment). Only intercepted from the editor's own Normal
+        // sub-mode, same restriction as everywhere else `z`/`Z` are checked
+        // in this file: in Insert sub-mode `z` is an ordinary typed
+        // character, not a request to pin.
+        if key.code == KeyCode::Char('z')
+            && app.notes_popup.active_editor.as_ref().map(|e| e.mode())
+                == Some(NoteEditorMode::Normal)
+        {
+            app.toggle_pin_focus();
+            return;
+        }
         handle_note_editor(app, key);
         return;
     }
@@ -444,60 +491,128 @@ fn handle_notes(app: &mut App, key: KeyEvent) {
     }
 }
 
+/// What happened when a key was applied to a `NoteEditorState` by
+/// [`handle_note_editor_normal`]/[`handle_note_editor_insert`]. Both the
+/// floating popup's editor (`handle_note_editor`) and T11's pinned/docked
+/// editor (`handle_pinned_note_key`) call the exact same two functions —
+/// this is how each caller learns what, if anything, it needs to do at its
+/// own level (flash a save error, or react to Esc stepping "out" one layer,
+/// which means something different in each context).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NoteEditorSignal {
+    /// The key was fully handled inside the editor; nothing more to do.
+    Handled,
+    /// `Ctrl+S` was pressed and `NoteEditorState::save` failed; the caller
+    /// (which owns `App` and can call `app.flash`) reports it.
+    SaveFailed(String),
+    /// Esc was pressed in the editor's Normal sub-mode — "step back out one
+    /// layer". What that means depends on the caller: the floating popup
+    /// closes the editor back to the notes list; the pinned note drops
+    /// keyboard focus back to the main app (it has no list to step back to).
+    Esc,
+}
+
 /// The embedded note editor nested inside `Mode::Notes` (see
 /// `NotesPopupState::active_editor`, `src/app/note_editor.rs`). Dispatches on
 /// the editor's own Normal/Insert sub-mode, mirroring how `Mode::Insert`
 /// dispatches on `DialogInputMode` elsewhere in this file.
 fn handle_note_editor(app: &mut App, key: KeyEvent) {
-    let Some(mode) = app.notes_popup.active_editor.as_ref().map(|e| e.mode()) else {
+    let Some(editor) = app.notes_popup.active_editor.as_mut() else {
         return;
     };
-    match mode {
-        NoteEditorMode::Normal => handle_note_editor_normal(app, key),
-        NoteEditorMode::Insert => handle_note_editor_insert(app, key),
+    let signal = match editor.mode() {
+        NoteEditorMode::Normal => handle_note_editor_normal(editor, key),
+        NoteEditorMode::Insert => handle_note_editor_insert(editor, key),
+    };
+    match signal {
+        NoteEditorSignal::Handled => {}
+        NoteEditorSignal::SaveFailed(msg) => app.flash(msg),
+        // First Esc: back to the notes list, `active_editor` becomes `None`,
+        // `Mode::Notes` itself untouched. A *second* Esc from there (now the
+        // bare list, handled by `handle_notes` above) is what closes the
+        // whole popup to `Mode::Normal`.
+        NoteEditorSignal::Esc => app.close_note_editor(),
+    }
+}
+
+/// T11: the pinned/docked note while it has keyboard focus
+/// (`app.pinned_focus`), routed here by the early branch in `handle_key`
+/// instead of the `Mode::Notes` path above — reuses the exact same
+/// `handle_note_editor_normal`/`_insert` functions the floating popup uses,
+/// operating on `app.pinned_note` instead of
+/// `app.notes_popup.active_editor`. `editor_mode` is passed in by the caller
+/// (which already read it to decide whether `z`/`Z` should be intercepted as
+/// global actions ahead of this call) rather than re-reading it here.
+fn handle_pinned_note_key(app: &mut App, key: KeyEvent, editor_mode: Option<NoteEditorMode>) {
+    let Some(mode) = editor_mode else {
+        return;
+    };
+    let Some(editor) = app.pinned_note.as_mut() else {
+        return;
+    };
+    let signal = match mode {
+        NoteEditorMode::Normal => handle_note_editor_normal(editor, key),
+        NoteEditorMode::Insert => handle_note_editor_insert(editor, key),
+    };
+    match signal {
+        NoteEditorSignal::Handled => {}
+        NoteEditorSignal::SaveFailed(msg) => app.flash(msg),
+        // The pinned note has no list to step back to — Esc from its Normal
+        // sub-mode "steps back out" the same way `z` does: focus returns to
+        // the main app, but the note stays pinned and visible.
+        NoteEditorSignal::Esc => app.toggle_pin_focus(),
     }
 }
 
 /// Normal sub-mode of the embedded note editor: `hjkl`/arrows move the
 /// cursor, `i` enters Insert, `Ctrl+S` saves (see the module doc on
 /// `src/app/note_editor.rs` for why this key was chosen over a
-/// `:`-command-line this codebase doesn't have), Esc steps back out to the
-/// notes list — `active_editor` becomes `None`, `Mode::Notes` itself is
-/// untouched. A *second* Esc from there (now the bare list, handled by
-/// `handle_notes` above) is what closes the whole popup to `Mode::Normal`.
-fn handle_note_editor_normal(app: &mut App, key: KeyEvent) {
+/// `:`-command-line this codebase doesn't have), Esc reports
+/// [`NoteEditorSignal::Esc`] for the caller to interpret. Operates directly
+/// on `&mut NoteEditorState` (not through `App`'s `note_editor_*`
+/// delegators) so this exact function serves both the floating popup's
+/// editor and T11's pinned one — see [`NoteEditorSignal`]'s doc comment.
+fn handle_note_editor_normal(editor: &mut NoteEditorState, key: KeyEvent) -> NoteEditorSignal {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
-        app.save_note_editor();
-        return;
+        return match editor.save() {
+            Ok(()) => NoteEditorSignal::Handled,
+            Err(e) => NoteEditorSignal::SaveFailed(format!("note save failed: {e}")),
+        };
     }
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => app.note_editor_move_down(),
-        KeyCode::Char('k') | KeyCode::Up => app.note_editor_move_up(),
-        KeyCode::Char('h') | KeyCode::Left => app.note_editor_move_left(),
-        KeyCode::Char('l') | KeyCode::Right => app.note_editor_move_right(),
-        KeyCode::Char('i') => app.note_editor_enter_insert(),
-        KeyCode::Esc => app.close_note_editor(),
+        KeyCode::Char('j') | KeyCode::Down => editor.move_down(),
+        KeyCode::Char('k') | KeyCode::Up => editor.move_up(),
+        KeyCode::Char('h') | KeyCode::Left => editor.move_left(),
+        KeyCode::Char('l') | KeyCode::Right => editor.move_right(),
+        KeyCode::Char('i') => editor.enter_insert(),
+        KeyCode::Esc => return NoteEditorSignal::Esc,
         _ => {}
     }
+    NoteEditorSignal::Handled
 }
 
 /// Insert sub-mode of the embedded note editor: characters type in at the
 /// cursor, Enter splits the line, Backspace deletes (joining with the
 /// previous line at column 0), `Ctrl+S` saves, Esc returns to the editor's
-/// Normal sub-mode — it does not leave the editor (see
-/// `NoteEditorState::esc_to_normal`).
-fn handle_note_editor_insert(app: &mut App, key: KeyEvent) {
+/// own Normal sub-mode — it does not leave the editor (see
+/// `NoteEditorState::esc_to_normal`), so unlike the Normal sub-mode's Esc
+/// this always reports `Handled`, never `Esc`. Same `&mut NoteEditorState`
+/// signature as `handle_note_editor_normal`, for the same reason.
+fn handle_note_editor_insert(editor: &mut NoteEditorState, key: KeyEvent) -> NoteEditorSignal {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
-        app.save_note_editor();
-        return;
+        return match editor.save() {
+            Ok(()) => NoteEditorSignal::Handled,
+            Err(e) => NoteEditorSignal::SaveFailed(format!("note save failed: {e}")),
+        };
     }
     match key.code {
-        KeyCode::Esc => app.note_editor_esc_to_normal(),
-        KeyCode::Enter => app.note_editor_split_line(),
-        KeyCode::Backspace => app.note_editor_backspace(),
-        KeyCode::Char(c) => app.note_editor_insert_char(c),
+        KeyCode::Esc => editor.esc_to_normal(),
+        KeyCode::Enter => editor.split_line(),
+        KeyCode::Backspace => editor.backspace(),
+        KeyCode::Char(c) => editor.insert_char(c),
         _ => {}
     }
+    NoteEditorSignal::Handled
 }
 
 /// The inline text prompt nested inside `Mode::Notes` — shared by create and
@@ -1235,6 +1350,13 @@ fn resolve_normal_key(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) -> O
         KeyCode::Char('F') => Action::ToggleShowFuture,
         KeyCode::Esc => Action::EscapeStack,
         KeyCode::Char('W') => Action::ChangeWeekStart,
+        // T11: tmux-pane-style pin/focus toggle for a note (`z`) and close
+        // the pin entirely (`Z`) — both unused letters (confirmed by reading
+        // this match before picking them), global rather than popup-internal
+        // so they work from bare Mode::Normal and (via `handle_key`'s early
+        // routing branch) even while the pinned note itself has focus.
+        KeyCode::Char('z') => Action::TogglePinFocus,
+        KeyCode::Char('Z') => Action::ClosePinnedNote,
         _ => return None,
     })
 }
@@ -1499,6 +1621,8 @@ fn apply_action(app: &mut App, action: Action) {
             app.toggle_week_start_date();
             app.recompute_visible();
         }
+        Action::TogglePinFocus => app.toggle_pin_focus(),
+        Action::ClosePinnedNote => app.close_pinned_note(),
     }
 }
 
@@ -2938,6 +3062,262 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(notes_folder.join("a.md")).expect("read back"),
             "saved!\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- T11: pin a note to the right-docked panel ------------------------
+
+    #[test]
+    fn resolve_z_and_shift_z_resolve_to_pin_actions() {
+        let mut app = build_app();
+        assert_eq!(resolve(&mut app, key('z')), Some(Action::TogglePinFocus));
+        assert_eq!(resolve(&mut app, key('Z')), Some(Action::ClosePinnedNote));
+    }
+
+    fn build_notes_app_with_open_editor(dir: &std::path::Path) -> App {
+        let mut app = build_notes_app_with_two_files(dir);
+        handle_notes(&mut app, key('e'));
+        assert!(
+            app.notes_popup.active_editor.is_some(),
+            "precondition: editor must be open"
+        );
+        app
+    }
+
+    #[test]
+    fn handle_key_z_pins_the_active_editor_and_closes_the_popup() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-basic-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_open_editor(&dir);
+
+        handle_key(&mut app, key('z'), &KeyBindings::default());
+
+        assert!(
+            app.notes_popup.active_editor.is_none(),
+            "moved out of the popup"
+        );
+        assert!(app.pinned_note.is_some(), "note now pinned");
+        assert!(app.pinned_focus, "newly pinned note gets focus");
+        assert_eq!(app.mode, Mode::Normal, "popup closes to Mode::Normal");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_key_z_with_nothing_pinned_and_no_active_editor_is_noop() {
+        let mut app = build_app();
+
+        handle_key(&mut app, key('z'), &KeyBindings::default());
+
+        assert!(app.pinned_note.is_none());
+        assert!(!app.pinned_focus);
+    }
+
+    #[test]
+    fn handle_key_shift_z_with_nothing_pinned_is_noop() {
+        let mut app = build_app();
+
+        handle_key(&mut app, key('Z'), &KeyBindings::default());
+
+        assert!(app.pinned_note.is_none());
+        assert!(!app.pinned_focus);
+    }
+
+    #[test]
+    fn handle_key_z_toggles_focus_off_then_back_on_while_pinned() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-toggle-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_open_editor(&dir);
+        handle_key(&mut app, key('z'), &KeyBindings::default()); // pin, focused
+        assert!(app.pinned_focus);
+
+        // Focused editor is in its own Normal sub-mode; `z` there is
+        // intercepted by handle_key's early branch (not typed as text).
+        handle_key(&mut app, key('z'), &KeyBindings::default());
+        assert!(!app.pinned_focus, "focus moves back to the main app");
+        assert!(
+            app.pinned_note.is_some(),
+            "note stays pinned, just unfocused"
+        );
+
+        // Unfocused: `z` falls through the ordinary Mode::Normal dispatch
+        // and resolves via resolve_normal_key -> Action::TogglePinFocus.
+        handle_key(&mut app, key('z'), &KeyBindings::default());
+        assert!(app.pinned_focus, "z re-focuses the pinned note");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_key_shift_z_closes_pin_while_focused() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-close-focused-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_open_editor(&dir);
+        handle_key(&mut app, key('z'), &KeyBindings::default()); // pin, focused
+        assert!(app.pinned_focus);
+
+        handle_key(&mut app, key('Z'), &KeyBindings::default());
+
+        assert!(app.pinned_note.is_none(), "pin removed entirely");
+        assert!(!app.pinned_focus);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_key_shift_z_closes_pin_while_unfocused() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-close-unfocused-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_open_editor(&dir);
+        handle_key(&mut app, key('z'), &KeyBindings::default()); // pin, focused
+        app.pinned_focus = false; // unfocus without closing
+
+        handle_key(&mut app, key('Z'), &KeyBindings::default());
+
+        assert!(app.pinned_note.is_none(), "pin removed entirely");
+        assert!(!app.pinned_focus);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn while_pinned_focus_true_ordinary_main_list_keys_do_not_leak_to_the_list() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-noleak-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_open_editor(&dir);
+        handle_key(&mut app, key('z'), &KeyBindings::default()); // pin, focused
+        let cursor_before = app.cursor;
+
+        // Main-list mnemonics: cursor-down, add-task, open-notes. None of
+        // these should reach the main list's `Action` dispatch while
+        // pinned_focus is true -- they're consumed by (or ignored by) the
+        // pinned note's own Normal sub-mode instead.
+        handle_key(&mut app, key('j'), &KeyBindings::default());
+        handle_key(&mut app, key('n'), &KeyBindings::default());
+        handle_key(&mut app, key('o'), &KeyBindings::default());
+
+        assert_eq!(
+            app.cursor, cursor_before,
+            "main list cursor must be untouched"
+        );
+        assert_eq!(
+            app.mode,
+            Mode::Normal,
+            "must not have opened Insert or Notes"
+        );
+        assert!(app.pinned_focus, "still focused on the pinned note");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn while_pinned_and_unfocused_ordinary_main_list_keys_work_normally() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-unfocused-works-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_open_editor(&dir);
+        handle_key(&mut app, key('z'), &KeyBindings::default()); // pin, focused
+        handle_key(&mut app, key('z'), &KeyBindings::default()); // unfocus
+        assert!(!app.pinned_focus);
+
+        // 'n' (BeginAdd) is an unambiguous, count-independent signal that the
+        // ordinary Mode::Normal dispatch ran: it always opens Mode::Insert.
+        handle_key(&mut app, key('n'), &KeyBindings::default());
+
+        assert_eq!(
+            app.mode,
+            Mode::Insert,
+            "main list keys must work normally while pinned but unfocused"
+        );
+        assert!(app.pinned_note.is_some(), "note remains pinned");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn typing_saving_and_motions_work_identically_via_the_pinned_note() {
+        // Reuses the exact same handle_note_editor_normal/_insert functions
+        // the floating popup uses (see NoteEditorSignal's doc comment) --
+        // proven here by driving the pinned note through full handle_key
+        // routing and checking the same buffer/save behavior the T6+T7
+        // floating-editor tests above already proved for the popup path.
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-typing-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_one_empty_file(&dir);
+        let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
+        handle_notes(&mut app, key('e')); // open in Normal sub-mode
+        handle_notes(&mut app, key('z')); // pin it (Mode::Notes -> pin/focus)
+        assert!(app.pinned_focus);
+        assert!(app.notes_popup.active_editor.is_none());
+        assert_eq!(
+            app.pinned_note.as_ref().expect("pinned").mode(),
+            NoteEditorMode::Normal
+        );
+
+        // `i` while pinned+focused, in the editor's own Normal sub-mode,
+        // reaches the same `enter_insert` the floating popup's `i` does.
+        handle_key(&mut app, key('i'), &KeyBindings::default());
+        assert_eq!(
+            app.pinned_note.as_ref().expect("pinned").mode(),
+            NoteEditorMode::Insert
+        );
+
+        for c in "hi".chars() {
+            handle_key(&mut app, key(c), &KeyBindings::default());
+        }
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &KeyBindings::default(),
+        );
+        for c in "there".chars() {
+            handle_key(&mut app, key(c), &KeyBindings::default());
+        }
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+            &KeyBindings::default(),
+        );
+
+        assert_eq!(
+            app.pinned_note.as_ref().expect("still pinned").lines(),
+            &["hi", "ther"]
+        );
+
+        handle_key(&mut app, ctrl('s'), &KeyBindings::default());
+
+        assert_eq!(
+            std::fs::read_to_string(notes_folder.join("a.md")).expect("read back"),
+            "hi\nther\n"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

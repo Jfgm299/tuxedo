@@ -45,36 +45,64 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         mode_label = format!("{mode_label} · {f}").into();
     }
 
-    let hint = match app.mode {
-        Mode::Insert => match app.draft.input_mode() {
-            DialogInputMode::Normal => {
-                "h/l navigate · w/b/e word · i/a insert · Enter save · Esc cancel"
-            }
-            DialogInputMode::Insert => "Enter save · Esc normal",
-        },
-        Mode::Visual => "space toggle · x complete · dd delete · Esc cancel",
-        Mode::Help => "? close help",
-        Mode::Settings => "Esc back",
-        Mode::PromptProject => "type +project name · Enter save · Esc cancel",
-        Mode::PromptContext => "type @context name · Enter toggle · Esc cancel",
-        Mode::PickProject => "j/k or ↑↓ cycle projects · r rename · Enter keep · Esc clear",
-        Mode::PickContext => "j/k or ↑↓ cycle contexts · r rename · Enter keep · Esc clear",
-        Mode::PickSavedFilter => "j/k or ↑↓ cycle filters · Enter keep · Esc revert",
-        Mode::PromptSaveFilter => "type a filter name · Enter save · Esc cancel",
-        Mode::CommandPalette => "type to filter · Enter run · Esc cancel",
-        Mode::Share => "scan the QR · any key dismisses",
-        Mode::Welcome => "c create ./todo.txt · s open sample · q quit",
-        Mode::Notes => match app.notes_popup.active_editor.as_ref().map(|e| e.mode()) {
+    // T11: while the pinned note has keyboard focus, `app.mode` stays
+    // `Mode::Normal` (that's the point — see `src/app/pinned_note.rs`), so
+    // it can't drive the hint on its own; check `pinned_focus` ahead of the
+    // per-mode match instead of trying to fold it into that match's arms.
+    let mut hint: std::borrow::Cow<'static, str> = if app.pinned_focus {
+        match app.pinned_note.as_ref().map(|e| e.mode()) {
             Some(NoteEditorMode::Normal) => {
-                "h/j/k/l or arrows move · i insert · Ctrl+S save · Esc back to list"
+                "h/j/k/l or arrows move · i insert · Ctrl+S save · z unfocus · Z close pinned"
+                    .into()
             }
             Some(NoteEditorMode::Insert) => {
-                "type to edit · Enter newline · Ctrl+S save · Esc normal"
+                "type to edit · Enter newline · Ctrl+S save · Esc normal".into()
             }
-            None => "j/k navigate · e/i edit · n new · r rename · d delete · u unlink · Esc close",
-        },
-        _ => "j/k · n new · r reschedule · x done · o notes · / search · ? help · u undo · q quit",
+            None => "z unfocus · Z close pinned".into(),
+        }
+    } else {
+        match app.mode {
+            Mode::Insert => match app.draft.input_mode() {
+                DialogInputMode::Normal => {
+                    "h/l navigate · w/b/e word · i/a insert · Enter save · Esc cancel"
+                }
+                DialogInputMode::Insert => "Enter save · Esc normal",
+            },
+            Mode::Visual => "space toggle · x complete · dd delete · Esc cancel",
+            Mode::Help => "? close help",
+            Mode::Settings => "Esc back",
+            Mode::PromptProject => "type +project name · Enter save · Esc cancel",
+            Mode::PromptContext => "type @context name · Enter toggle · Esc cancel",
+            Mode::PickProject => "j/k or ↑↓ cycle projects · r rename · Enter keep · Esc clear",
+            Mode::PickContext => "j/k or ↑↓ cycle contexts · r rename · Enter keep · Esc clear",
+            Mode::PickSavedFilter => "j/k or ↑↓ cycle filters · Enter keep · Esc revert",
+            Mode::PromptSaveFilter => "type a filter name · Enter save · Esc cancel",
+            Mode::CommandPalette => "type to filter · Enter run · Esc cancel",
+            Mode::Share => "scan the QR · any key dismisses",
+            Mode::Welcome => "c create ./todo.txt · s open sample · q quit",
+            Mode::Notes => match app.notes_popup.active_editor.as_ref().map(|e| e.mode()) {
+                Some(NoteEditorMode::Normal) => {
+                    "h/j/k/l or arrows move · i insert · Ctrl+S save · Esc back to list"
+                }
+                Some(NoteEditorMode::Insert) => {
+                    "type to edit · Enter newline · Ctrl+S save · Esc normal"
+                }
+                None => {
+                    "j/k navigate · e/i edit · n new · r rename · d delete · u unlink · Esc close"
+                }
+            },
+            _ => {
+                "j/k · n new · r reschedule · x done · o notes · z pin · / search · ? help · u undo · q quit"
+            }
+        }
+        .into()
     };
+    // A note pinned-but-unfocused still needs `Z` surfaced somewhere — it's
+    // not covered by any per-mode arm above since the user could be in
+    // almost any mode while it sits docked in the background.
+    if !app.pinned_focus && app.pinned_note.is_some() {
+        hint = format!("{hint} · Z close pinned").into();
+    }
 
     let mut right_parts = Vec::new();
     if matches!(app.view, View::Archive) {

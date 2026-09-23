@@ -17,24 +17,45 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::App;
+use crate::app::{App, NoteEditorState};
 use crate::theme::Theme;
 
+/// Render the floating popup's embedded editor
+/// (`NotesPopupState::active_editor`). Thin wrapper over [`render_editor`]:
+/// the floating popup is always the sole keyboard target while open, so it
+/// always renders as "focused" (accent border) — there's no unfocused state
+/// for it the way there is for T11's pinned/docked note.
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = app.theme();
     let Some(editor) = app.notes_popup.active_editor.as_ref() else {
         return;
     };
+    render_editor(frame, area, app.theme(), editor, true);
+}
 
+/// Render `editor`'s buffer into `area` using this bordered-box chrome,
+/// shared by both the floating popup (`render` above, always `focused`) and
+/// T11's right-docked pinned note (`app.pinned_note`, `focused` tracks
+/// `app.pinned_focus`). `focused` picks the border color — an accent border
+/// when this editor currently has keyboard focus, a dim default border when
+/// it's pinned-but-unfocused — so it's clear at a glance where keystrokes are
+/// going.
+pub fn render_editor(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    editor: &NoteEditorState,
+    focused: bool,
+) {
     let file_name = editor
         .path()
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| editor.path().display().to_string());
 
+    let border_color = if focused { theme.accent } else { theme.border };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border).bg(theme.panel))
+        .border_style(Style::default().fg(border_color).bg(theme.panel))
         .title(Line::from(vec![Span::styled(
             format!(" {file_name} "),
             Style::default()

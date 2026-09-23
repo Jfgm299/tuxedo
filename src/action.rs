@@ -63,6 +63,18 @@ pub enum Action {
     /// Open the theme picker dialog (j/k to preview, Enter to accept).
     OpenThemePicker,
     ChangeWeekStart,
+    /// `z` — tmux-pane-style toggle-focus for the pinned note (see
+    /// `odd/tasks/notes-popup.md` T11). Nothing pinned + a note open in the
+    /// floating editor: pin it (moves it out of `NotesPopupState` into
+    /// `App::pinned_note`, closes the popup, gives it focus). Something
+    /// already pinned: toggle keyboard focus between it and the main app.
+    /// No-op when nothing is pinned and no floating editor is open. Global
+    /// (not popup-internal) because it must fire from bare `Mode::Normal`.
+    TogglePinFocus,
+    /// `Z` (Shift+Z) — close the pinned note entirely, from anywhere
+    /// (whether it currently has focus or not), discarding it (not just
+    /// unfocusing). No-op when nothing is pinned.
+    ClosePinnedNote,
 }
 
 impl Action {
@@ -117,6 +129,8 @@ impl Action {
             "open_share" | "share" => Some(Self::OpenShare),
             "open_theme_picker" | "theme_picker" => Some(Self::OpenThemePicker),
             "change_week_start" => Some(Self::ChangeWeekStart),
+            "toggle_pin_focus" | "pin_focus" => Some(Self::TogglePinFocus),
+            "close_pinned_note" | "unpin_note" => Some(Self::ClosePinnedNote),
             _ => None,
         }
     }
@@ -225,6 +239,26 @@ mod tests {
         assert_eq!(Action::from_keybind_name("note"), None);
         assert_eq!(Action::from_keybind_name("create_or_open_note"), None);
         assert_eq!(Action::from_keybind_name("create_note"), None);
+    }
+
+    #[test]
+    fn pinned_note_actions_are_rebindable() {
+        assert_eq!(
+            Action::from_keybind_name("toggle_pin_focus"),
+            Some(Action::TogglePinFocus)
+        );
+        assert_eq!(
+            Action::from_keybind_name("pin_focus"),
+            Some(Action::TogglePinFocus)
+        );
+        assert_eq!(
+            Action::from_keybind_name("close_pinned_note"),
+            Some(Action::ClosePinnedNote)
+        );
+        assert_eq!(
+            Action::from_keybind_name("unpin_note"),
+            Some(Action::ClosePinnedNote)
+        );
     }
 
     #[test]
