@@ -17,6 +17,31 @@ brew install tuxedo
 
 For a more in-depth walkthrough, please watch [this video](https://www.youtube.com/watch?v=mT1tg6SQ_Ag) by [@IogaMaster](https://github.com/IogaMaster).
 
+## About this fork
+
+This is a personal fork of [webstonehq/tuxedo](https://github.com/webstonehq/tuxedo)
+(MIT licensed — see [`LICENSE`](LICENSE)), extended with a **notes popup**:
+press `o` on a task to browse, create, rename, delete, or unlink one or more
+markdown notes linked to it (`notes:<id>/`, replacing the upstream
+`note:<path>` single-file model), edited in a small embedded vim-like editor
+— no `$EDITOR` shell-out required. From the editor you can pin a note to a
+right-docked half-screen panel (`z` to pin/toggle focus, `Z` to close,
+`Tab`/`Shift+Tab` to switch between several pinned notes as tabs) and use a
+`:`-command popup (`:w` / `:q` / `:wq` / `:x`) styled after
+[noice.nvim](https://github.com/folke/noice.nvim)'s cmdline popup. The
+command palette (`Ctrl+P`) lists all of this too. Everything else in this
+README describes the upstream project this was built on top of.
+
+Build and install this fork independently of the Homebrew-packaged upstream
+`tuxedo` with:
+
+```sh
+./install.sh
+```
+
+See [`odd/tasks/notes-popup.md`](odd/tasks/notes-popup.md) for the full
+design rationale and implementation history of this feature.
+
 ## Highlights
 
 - **Pure todo.txt.** Reads and writes the [standard format](https://github.com/todotxt/todo.txt) — every line is plain text you can edit with anything else.
