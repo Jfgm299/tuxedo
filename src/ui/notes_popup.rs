@@ -104,6 +104,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    // Round 3 feedback: adopt `task_row.rs::build_line`'s row convention
+    // instead of a bare background swap — a leading glyph column (same
+    // `"▸ "`/`"  "` glyph, same `theme.accent` coloring) plus the background
+    // swap, so the selected row reads unambiguously via both signals, not
+    // just one.
     let lines: Vec<Line> = state
         .files
         .iter()
@@ -115,9 +120,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 .unwrap_or_else(|| path.display().to_string());
             let is_sel = i == state.cursor;
             let bg = if is_sel { theme.cursor } else { theme.panel };
-            let style = Style::default().fg(theme.fg).bg(bg);
-            Line::from(vec![Span::styled(format!("  {name}"), style)])
-                .style(Style::default().bg(bg))
+            let glyph = if is_sel { "▸ " } else { "  " };
+            let mut glyph_style = Style::default().fg(theme.accent).bg(bg);
+            if is_sel {
+                glyph_style = glyph_style.add_modifier(Modifier::BOLD);
+            }
+            let name_style = Style::default().fg(theme.fg).bg(bg);
+            Line::from(vec![
+                Span::styled(glyph, glyph_style),
+                Span::styled(name, name_style),
+            ])
+            .style(Style::default().bg(bg))
         })
         .collect();
 
@@ -133,7 +146,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use crate::app::{App, Mode, NotePromptKind};
+    use crate::app::{App, Mode, NotePromptKind, NotesPopupState};
     use crate::config::Config;
 
     fn build_app() -> App {
@@ -208,6 +221,75 @@ mod tests {
         assert!(
             !text.to_lowercase().contains(".md"),
             "rename prompt should no longer explain .md auto-append: {text}"
+        );
+    }
+
+    // ---- Round 3 feedback: list rows adopt task_row.rs's glyph convention --
+
+    /// The cursor row must carry the same leading glyph `task_row.rs::build_line`
+    /// uses for its own cursor row (`"▸ "`), not just a background swap — the
+    /// user's exact complaint was that a plain background swap alone reads as
+    /// "muy soso" (bland). Non-cursor rows keep the matching blank two-char
+    /// glyph column (`"  "`) so filenames stay aligned.
+    #[test]
+    fn cursor_row_shows_the_same_glyph_task_row_uses() {
+        let mut app = build_app();
+        app.notes_popup = NotesPopupState::new(vec![
+            std::path::PathBuf::from("/tmp/a.md"),
+            std::path::PathBuf::from("/tmp/b.md"),
+        ]);
+        app.notes_popup.cursor = 1;
+
+        let text = render_popup(&app);
+
+        let cursor_line = text
+            .lines()
+            .find(|l| l.contains("b.md"))
+            .expect("cursor row (b.md) rendered");
+        assert!(
+            cursor_line.contains('▸'),
+            "cursor row must show task_row.rs's cursor glyph: {cursor_line:?}"
+        );
+        let other_line = text
+            .lines()
+            .find(|l| l.contains("a.md"))
+            .expect("non-cursor row (a.md) rendered");
+        assert!(
+            !other_line.contains('▸'),
+            "non-cursor row must not show the cursor glyph: {other_line:?}"
+        );
+    }
+
+    /// The cursor row's emphasis must read via BOTH the glyph AND the
+    /// background swap — not just one — per the explicit requirement that
+    /// selection be unambiguous.
+    #[test]
+    fn cursor_row_has_both_glyph_color_and_background_emphasis() {
+        let mut app = build_app();
+        app.notes_popup = NotesPopupState::new(vec![std::path::PathBuf::from("/tmp/only.md")]);
+        let theme = app.theme();
+
+        let backend = TestBackend::new(60, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        let buf = terminal.backend().buffer();
+
+        // Row 1 (inside the border) is the single file row, cursor at 0.
+        let row_has_cursor_bg = (0..buf.area.width).any(|x| buf[(x, 1)].bg == theme.cursor);
+        assert!(
+            row_has_cursor_bg,
+            "selected row must still carry the background swap"
+        );
+        let glyph_cell = (0..buf.area.width).find(|&x| buf[(x, 1)].symbol() == "▸");
+        assert!(
+            glyph_cell.is_some(),
+            "selected row must also carry the glyph"
+        );
+        let glyph_x = glyph_cell.unwrap();
+        assert_eq!(
+            buf[(glyph_x, 1)].fg,
+            theme.accent,
+            "glyph must be colored via theme.accent, matching task_row.rs"
         );
     }
 }

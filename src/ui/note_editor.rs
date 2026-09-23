@@ -72,28 +72,39 @@ pub fn render_pinned(frame: &mut Frame, area: Rect, theme: &Theme, app: &App) {
 /// One-line strip of tab labels (filenames), the active tab visually
 /// distinguished with the same selection-highlight convention
 /// `src/ui/notes_popup.rs`'s list already uses for its selected row
-/// (`theme.cursor` background) rather than inventing new visual language.
+/// (`theme.cursor` background), extended with the exact same leading
+/// `"▸ "`/`"  "` glyph (Round 3 feedback) so the list and the tab strip read
+/// as one visual system rather than two slightly different ones.
 fn render_tab_bar(frame: &mut Frame, area: Rect, theme: &Theme, app: &App) {
     let spans: Vec<Span> = app
         .pinned_notes
         .iter()
         .enumerate()
-        .map(|(i, note)| {
+        .flat_map(|(i, note)| {
             let name = note
                 .path()
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| note.path().display().to_string());
             let is_active = i == app.active_pin;
-            let style = if is_active {
-                Style::default()
-                    .fg(theme.fg)
-                    .bg(theme.cursor)
-                    .add_modifier(Modifier::BOLD)
+            let bg = if is_active { theme.cursor } else { theme.panel };
+            let glyph = if is_active { "▸ " } else { "  " };
+            let mut glyph_style = Style::default().fg(theme.accent).bg(bg);
+            let mut name_style = if is_active {
+                Style::default().fg(theme.fg)
             } else {
-                Style::default().fg(theme.dim).bg(theme.panel)
-            };
-            Span::styled(format!(" {name} "), style)
+                Style::default().fg(theme.dim)
+            }
+            .bg(bg);
+            if is_active {
+                glyph_style = glyph_style.add_modifier(Modifier::BOLD);
+                name_style = name_style.add_modifier(Modifier::BOLD);
+            }
+            [
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(glyph, glyph_style),
+                Span::styled(format!("{name} "), name_style),
+            ]
         })
         .collect();
     let line = Line::from(spans).style(Style::default().bg(theme.panel));
@@ -426,6 +437,46 @@ mod tests {
             text.matches("second.md").count(),
             2,
             "active tab shown in the strip AND as the editor's title: {text}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Round 3 feedback: the notes-list row restyle (leading `"▸ "` glyph,
+    /// `theme.accent`-colored) is the visual language for "this one is
+    /// current" across the notes UI now — the tab bar's active tab adopts
+    /// the exact same glyph rather than relying on background+bold alone, so
+    /// the popup list and the pinned-tab strip read as one system.
+    #[test]
+    fn render_pinned_tab_bar_marks_the_active_tab_with_the_same_glyph_as_the_notes_list() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-note-editor-render-tab-glyph-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        let mut app = build_app("Buy milk\n");
+        app.pinned_notes.push(note("first.md", &dir));
+        app.pinned_notes.push(note("second.md", &dir));
+        app.active_pin = 0;
+        let theme = app.theme();
+
+        let backend = TestBackend::new(40, 8);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| render_pinned(f, f.area(), theme, &app))
+            .expect("draw");
+        let buf = terminal.backend().buffer();
+
+        let glyph_cell = (0..buf.area.width).find(|&x| buf[(x, 0)].symbol() == "▸");
+        assert!(
+            glyph_cell.is_some(),
+            "active tab must show the same cursor glyph the notes list uses"
+        );
+        assert_eq!(
+            buf[(glyph_cell.expect("glyph cell found"), 0)].fg,
+            theme.accent,
+            "tab glyph must be colored via theme.accent, matching the notes list"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

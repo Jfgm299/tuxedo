@@ -24,7 +24,7 @@ const NAVIGATION: Section = (
 const EDITING: Section = (
     "EDITING",
     &[
-        ("n", "new task"),
+        ("n / o", "new task / open notes"),
         ("e / i", "edit (normal / insert)"),
         ("r", "reschedule task"),
         ("x", "toggle complete"),
@@ -246,5 +246,95 @@ fn pad_str(s: &str, w: usize) -> String {
         let mut o = s.to_string();
         o.push_str(&" ".repeat(w - len));
         o
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::app::{App, Mode};
+    use crate::config::Config;
+
+    fn build_app() -> App {
+        let path =
+            std::env::temp_dir().join(format!("tuxedo-help-test-{}.txt", std::process::id()));
+        let body = "(A) Buy milk\n".to_string();
+        std::fs::write(&path, &body).unwrap();
+        let mut app = App::new(path, body, "2026-05-06".to_string(), Config::default());
+        app.mode = Mode::Help;
+        app
+    }
+
+    /// Renders through the real `ui::draw` (not a bare `super::render` call
+    /// with an arbitrary `Rect`) so the overlay is sized exactly the way the
+    /// real app sizes it — `ui::draw`'s `Mode::Help` arm clamps the box to
+    /// `area.height.saturating_sub(3).min(HELP_MAX_H)`, which is materially
+    /// smaller than a bare full-height `Rect` and is the actual constraint
+    /// this task's budget concern is about.
+    fn render_help(app: &App, w: u16, h: u16) -> String {
+        let backend = TestBackend::new(w, h);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| crate::ui::draw(f, app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                text.push_str(buf[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    /// The `?` help overlay never mentioned `o`/notes anywhere (confirmed by
+    /// grep before this task). Users had no way to discover the feature
+    /// exists from the overlay itself. `o` is paired onto the existing `n`
+    /// row (`"n / o"`) rather than given a standalone row: the overlay is
+    /// height-bound to fill a 32-row terminal exactly (see this module's own
+    /// doc comment), and this file already sits at that budget with zero
+    /// slack — adding a brand-new row pushes a `FORMAT` row off the bottom
+    /// (confirmed by rendering at the real constrained size the app actually
+    /// uses; see the task report). Pairing costs no extra row, matching the
+    /// same "opposed keys share a row" convention already used throughout
+    /// this file (`j / k`, `e / i`, etc.).
+    #[test]
+    fn editing_section_advertises_the_o_notes_entry_point() {
+        let app = build_app();
+        // Same 100x32 shape `tests/snapshots.rs` renders the whole app at.
+        let text = render_help(&app, 100, 32);
+        assert!(
+            text.contains("n / o") && text.contains("new task / open notes"),
+            "EDITING section should advertise 'o' → open notes, paired onto the 'n' row: {text}"
+        );
+    }
+
+    /// Regression guard for the budget itself. While implementing this task,
+    /// rendering at the app's real overlay size (not a bare full-height
+    /// `Rect`) revealed the overlay was *already* one row over its stated
+    /// 29-row budget before this change — `FORMAT`'s `@context`/`x DATE
+    /// BODY` row was already being silently dropped by the `Layout`'s
+    /// `Min(0)` fmt area losing the tie-break to the taller `kb_area`. That
+    /// pre-existing bug is out of scope for this task (only the `o` entry
+    /// point was requested) and is called out in the task report rather
+    /// than fixed here. What IS in scope: pairing `o` onto the `n` row must
+    /// not make that pre-existing loss any WORSE — this pins the exact
+    /// pre-existing clipping point (`+project` visible, `@context` already
+    /// gone) so a future regression that drops `+project` too gets caught.
+    #[test]
+    fn pairing_o_onto_n_does_not_worsen_the_pre_existing_format_clipping() {
+        let app = build_app();
+        let text = render_help(&app, 100, 32);
+        assert!(
+            text.contains("+project"),
+            "must not regress further than the pre-existing clipping point: {text}"
+        );
+        assert!(
+            !text.contains("@context"),
+            "documents the pre-existing (out-of-scope) clipping — remove this \
+             assertion the day that budget bug is actually fixed: {text}"
+        );
     }
 }

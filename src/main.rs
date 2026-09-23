@@ -532,6 +532,13 @@ fn handle_notes(app: &mut App, key: KeyEvent) {
         KeyCode::Char('u') => app.unlink_selected_note(),
         KeyCode::Char('e') => app.open_note_editor_normal(),
         KeyCode::Char('i') => app.open_note_editor_insert(),
+        // Round 3 feedback: `z` while just browsing the list (no floating
+        // editor open yet -- that case is intercepted above, ahead of this
+        // match) pins the selected note directly into the right-docked
+        // panel, skipping the floating-editor step. See
+        // `App::pin_selected_note_directly`'s doc comment for the empty-list
+        // edge case this deliberately guards against.
+        KeyCode::Char('z') => app.pin_selected_note_directly(),
         KeyCode::Esc => app.mode = Mode::Normal,
         _ => {}
     }
@@ -3660,6 +3667,136 @@ mod tests {
             app.pinned_notes[0].lines(),
             &["content a"],
             "the other, inactive tab is untouched"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- Round 3 feedback: `z` pins directly from the plain notes list ----
+
+    #[test]
+    fn handle_notes_z_from_plain_list_pins_directly_with_nothing_previously_pinned() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-direct-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir); // cursor at a.md
+        assert!(
+            app.notes_popup.active_editor.is_none(),
+            "never opened the floating editor"
+        );
+
+        handle_notes(&mut app, key('z'));
+
+        assert_eq!(app.pinned_notes.len(), 1);
+        assert_eq!(app.pinned_notes[0].lines(), &["content a"]);
+        assert_eq!(app.active_pin, 0);
+        assert!(app.pinned_focus, "newly pinned note gets focus");
+        assert_eq!(app.mode, Mode::Normal, "popup closes back to Mode::Normal");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn handle_notes_z_from_plain_list_with_something_already_pinned_adds_a_second_tab() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-direct-second-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        handle_notes(&mut app, key('z')); // pin a.md directly, tab 0
+        assert_eq!(app.pinned_notes.len(), 1);
+        handle_key(&mut app, key('z'), &KeyBindings::default()); // unfocus, hand focus back to the main app
+        assert!(!app.pinned_focus);
+
+        handle_key(&mut app, key('o'), &KeyBindings::default()); // reopen the popup
+        assert_eq!(app.mode, Mode::Notes);
+        handle_notes(&mut app, key('j')); // select b.md
+        handle_notes(&mut app, key('z')); // pin b.md directly too, tab 1
+
+        assert_eq!(app.pinned_notes.len(), 2, "second tab added, not replaced");
+        assert_eq!(app.active_pin, 1, "the new tab becomes active");
+        assert!(app.pinned_focus);
+        assert_eq!(
+            app.pinned_notes[0].lines(),
+            &["content a"],
+            "the first pinned tab is undisturbed"
+        );
+        assert_eq!(app.pinned_notes[1].lines(), &["content b"]);
+        assert_eq!(app.mode, Mode::Normal);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The regression this task exists for: naively implementing "z from the
+    /// plain list" as `open_note_editor_normal()` followed by
+    /// `toggle_pin_focus()` is wrong on an EMPTY notes list when something
+    /// else is already pinned and unfocused -- `open_note_editor_normal()`
+    /// correctly no-ops (nothing selected), but `toggle_pin_focus()`'s
+    /// fallback branch doesn't know that just happened, so it would still
+    /// toggle focus onto the unrelated already-pinned note. `z` on an empty
+    /// list must be a COMPLETE no-op: pinned state, active tab, and focus
+    /// all unchanged.
+    #[test]
+    fn handle_notes_z_on_empty_list_with_existing_pin_is_a_complete_noop() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-pin-direct-empty-noop-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let notes_folder = dir.join("tasks").join("abc123");
+        std::fs::create_dir_all(&notes_folder).expect("create notes folder");
+        std::fs::write(notes_folder.join("a.md"), "content a").expect("write a.md");
+        let path = std::env::temp_dir().join(format!(
+            "tuxedo-pin-direct-empty-noop-todo-{}-{:?}.txt",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        // Task 0 has a note to pin; task 1 has none -- its notes popup opens
+        // to a genuinely empty list.
+        let raw = "Write PR summary +work notes:abc123/\nSecond task +other\n";
+        std::fs::write(&path, raw).expect("write todo.txt");
+        let cfg = Config {
+            notes_dir: Some(dir.to_string_lossy().into_owned()),
+            ..Config::default()
+        };
+        let mut app = App::new(path, raw.into(), "2026-05-07".into(), cfg);
+
+        handle_key(&mut app, key('o'), &KeyBindings::default()); // open notes for task 0
+        handle_notes(&mut app, key('z')); // pin a.md directly, focused
+        assert_eq!(app.pinned_notes.len(), 1);
+        handle_key(&mut app, key('z'), &KeyBindings::default()); // unfocus
+        assert!(!app.pinned_focus);
+
+        handle_key(&mut app, key('j'), &KeyBindings::default()); // move to task 1 (no notes)
+        handle_key(&mut app, key('o'), &KeyBindings::default()); // open its (empty) notes popup
+        assert_eq!(app.mode, Mode::Notes);
+        assert!(app.notes_popup.files.is_empty(), "task 1 has no notes");
+
+        let pinned_before = app.pinned_notes.clone();
+        let active_pin_before = app.active_pin;
+        let pinned_focus_before = app.pinned_focus;
+
+        handle_notes(&mut app, key('z'));
+
+        assert_eq!(
+            app.pinned_notes, pinned_before,
+            "the unrelated already-pinned note must be untouched"
+        );
+        assert_eq!(app.active_pin, active_pin_before);
+        assert_eq!(
+            app.pinned_focus, pinned_focus_before,
+            "focus must not toggle onto the unrelated pinned note"
+        );
+        assert_eq!(
+            app.mode,
+            Mode::Notes,
+            "popup stays open -- z on an empty list is a genuine no-op"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

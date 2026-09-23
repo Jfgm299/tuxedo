@@ -28,7 +28,7 @@
 //! `Mode::Notes` — see the early routing branch in `main.rs::handle_key`.
 
 use super::App;
-use super::note_editor::NoteEditorState;
+use super::note_editor::{NoteEditorMode, NoteEditorState};
 use super::types::Mode;
 
 impl App {
@@ -72,6 +72,37 @@ impl App {
             return;
         }
         self.pinned_focus = !self.pinned_focus;
+    }
+
+    /// Round 3 feedback: `z` while just BROWSING the plain notes list (no
+    /// floating editor open yet, `notes_popup.active_editor.is_none()`) --
+    /// loads the currently selected file straight into a new pinned tab, as
+    /// if `e` then `z` had been pressed, skipping the floating-editor step
+    /// entirely. Resolves the selected file the exact same way
+    /// `App::open_note_editor_normal` does (`notes_popup.selected()`), and
+    /// no-ops on an empty list -- nothing selected to pin.
+    ///
+    /// This is deliberately its own method rather than
+    /// `open_note_editor_normal()` followed by `toggle_pin_focus()`: on an
+    /// empty list with something already pinned and unfocused, that naive
+    /// composition would be a real bug -- `open_note_editor_normal()`
+    /// correctly no-ops (nothing selected), but `toggle_pin_focus()`'s
+    /// fallback branch has no way to know an open attempt "just failed"
+    /// upstream, so it would still toggle focus onto the unrelated
+    /// already-pinned note. Here, nothing happens at all unless a file was
+    /// actually resolved -- only then do we push a new tab, activate it,
+    /// focus it, and close the popup, mirroring exactly what
+    /// `toggle_pin_focus()` does for the "pin from the floating editor"
+    /// case, minus the intermediate `NotesPopupState::active_editor` layer.
+    pub fn pin_selected_note_directly(&mut self) {
+        let Some(path) = self.notes_popup.selected().cloned() else {
+            return;
+        };
+        let editor = NoteEditorState::load(path, NoteEditorMode::Normal);
+        self.pinned_notes.push(editor);
+        self.active_pin = self.pinned_notes.len() - 1;
+        self.pinned_focus = true;
+        self.mode = Mode::Normal;
     }
 
     /// `Z`: close only the ACTIVE pinned tab, from anywhere — whether it

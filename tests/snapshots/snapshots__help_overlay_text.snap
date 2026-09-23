@@ -10,7 +10,7 @@ expression: buffer_to_text(&buf)
    +f│    Ctrl-d / Ctrl-u   page down / up            ff / fs           saved filter pick/save│     
    +h│                                                S                 cycle sort            │     
    +l│  EDITING                                       v                 visual / multi-select │     
-   +p│    n                 new task                  l                 list view             │     
+   +p│    n / o             new task / open notes     l                 list view             │     
    +t│    e / i             edit (normal / insert)    a                 archive view          │     
      │    r                 reschedule task           A                 archive completed     │rd   
  CONT│    x                 toggle complete           H                 show done in list     │     
