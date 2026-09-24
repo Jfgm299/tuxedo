@@ -67,12 +67,19 @@ can carry one or more markdown notes, edited without leaving the app.
 
 ### Install
 
-Independently of the Homebrew-packaged upstream `tuxedo` — this never
-touches that install:
-
 ```sh
 ./install.sh
 ```
+
+Installs as `tuxedo-w-notes` (override with `$INSTALL_NAME`), not `tuxedo` —
+deliberately a different command name, independent of a Homebrew-installed
+upstream `tuxedo` (`brew install tuxedo`), which this never touches. On most
+setups `/opt/homebrew/bin` (where Homebrew puts it) comes before
+`~/.local/bin` (where this installs by default) on `PATH`, so a plain
+`tuxedo` would just keep launching the Homebrew build no matter where this
+one lives — a distinct name sidesteps that instead of asking you to reorder
+your `PATH`, which would affect every other tool you have installed both
+ways, not just this one.
 
 See [`odd/tasks/notes-popup.md`](odd/tasks/notes-popup.md) for the full
 design rationale and implementation history of this feature.
