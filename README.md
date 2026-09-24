@@ -20,20 +20,55 @@ For a more in-depth walkthrough, please watch [this video](https://www.youtube.c
 ## About this fork
 
 This is a personal fork of [webstonehq/tuxedo](https://github.com/webstonehq/tuxedo)
-(MIT licensed — see [`LICENSE`](LICENSE)), extended with a **notes popup**:
-press `o` on a task to browse, create, rename, delete, or unlink one or more
-markdown notes linked to it (`notes:<id>/`, replacing the upstream
-`note:<path>` single-file model), edited in a small embedded vim-like editor
-— no `$EDITOR` shell-out required. From the editor you can pin a note to a
-right-docked half-screen panel (`z` to pin/toggle focus, `Z` to close,
-`Tab`/`Shift+Tab` to switch between several pinned notes as tabs) and use a
-`:`-command popup (`:w` / `:q` / `:wq` / `:x`) styled after
-[noice.nvim](https://github.com/folke/noice.nvim)'s cmdline popup. The
-command palette (`Ctrl+P`) lists all of this too. Everything else in this
-README describes the upstream project this was built on top of.
+(MIT licensed — see [`LICENSE`](LICENSE)). All credit for the base
+application — the todo.txt engine, the TUI, the themes, everything described
+below in the rest of this README — goes to that upstream project and its
+contributors. This fork adds one feature on top: a **notes popup**, so a task
+can carry one or more markdown notes, edited without leaving the app.
 
-Build and install this fork independently of the Homebrew-packaged upstream
-`tuxedo` with:
+### What's different from upstream
+
+- **Multiple notes per task**, stored one per file under `notes_dir/tasks/<id>/`
+  (`notes:<id>/` token), replacing upstream's single-file `note:<path>` model.
+- **A popup to browse/manage them** (`o` on a task) instead of shelling out
+  to `$EDITOR`.
+- **An embedded markdown editor** (vim-like Normal/Insert modes) built into
+  the TUI itself — no external editor process, and it respects tuxedo's
+  active theme.
+- **Pin a note to a right-docked panel** and keep using the rest of the app
+  alongside it, with several notes pinned as switchable tabs.
+- **A `:`-command popup** inside the editor (`:w` / `:q` / `:wq` / `:x`),
+  styled after [noice.nvim](https://github.com/folke/noice.nvim)'s cmdline
+  popup, so `:w`/`:wq` muscle memory works without needing real vim.
+- The command palette (`Ctrl+P`, now also reachable from inside the notes
+  popup) lists every notes action too.
+
+### Using the notes feature
+
+| Where | Key | Does |
+|---|---|---|
+| On a task | `o` | Open the notes popup for that task |
+| Notes list | `j`/`k` or ↑↓ | Navigate |
+| | `n` | New note (type a name, `.md` added automatically) |
+| | `r` | Rename the selected note |
+| | `d` then `y`/`n` | Delete the selected note, with confirmation |
+| | `u` | Unlink (moves it out, doesn't delete the file) |
+| | `e` / `i` | Open the selected note in the editor (Normal / Insert) |
+| | `z` | Pin the selected note straight to the side panel |
+| | Esc | Close the popup |
+| Editor | `h`/`j`/`k`/`l` or arrows | Move (Normal mode) |
+| | `i` | Enter Insert mode |
+| | Esc | Insert → Normal → back to the list (one step at a time) |
+| | `Ctrl+S` | Save |
+| | `:w` `:q` `:wq` `:x` | Save / close / save-then-close, vim-style |
+| | `z` | Pin this note to the right panel / toggle focus into or out of it |
+| | `Z` | Close the pinned note, from anywhere |
+| | `Tab` / `Shift+Tab` | Switch between pinned notes (when more than one is pinned) |
+
+### Install
+
+Independently of the Homebrew-packaged upstream `tuxedo` — this never
+touches that install:
 
 ```sh
 ./install.sh
