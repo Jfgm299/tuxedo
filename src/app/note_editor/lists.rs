@@ -4,7 +4,8 @@
 //!
 //! Recognized items: `-`, `*` and `+` bullets and `1.` / `1)` numbered
 //! items, each followed by a space and optionally by a `[ ]` / `[x]`
-//! checkbox, at any indentation.
+//! checkbox, and bare `[ ]` / `[x]` checkboxes with no bullet (the preview
+//! renders those as tasks too), at any indentation.
 
 use super::{NoteEditorState, byte_offset};
 
@@ -40,6 +41,10 @@ impl ListMarker {
             None => self.bullet.clone(),
         };
         let checkbox = if self.checkbox.is_some() { "[ ] " } else { "" };
+        if bullet.is_empty() {
+            // A bare `[ ]` item (no bullet before the checkbox).
+            return format!("{}{checkbox}", self.indent);
+        }
         format!("{}{bullet} {checkbox}", self.indent)
     }
 }
@@ -51,6 +56,8 @@ fn parse_marker(line: &str) -> Option<ListMarker> {
     let bullet_start = i;
     match chars.get(i) {
         Some('-' | '*' | '+') => i += 1,
+        // A bare checkbox with no bullet (`[ ] task`): checked below.
+        Some('[') => {}
         Some(c) if c.is_ascii_digit() => {
             while chars.get(i).is_some_and(char::is_ascii_digit) {
                 i += 1;
@@ -65,10 +72,12 @@ fn parse_marker(line: &str) -> Option<ListMarker> {
     let bullet: String = chars[bullet_start..i].iter().collect();
     // A bullet must be followed by a space (or end the line, while it's
     // still being typed): `-foo` and `**bold**` are not list items.
-    match chars.get(i) {
-        Some(' ') => i += 1,
-        None => {}
-        Some(_) => return None,
+    if !bullet.is_empty() {
+        match chars.get(i) {
+            Some(' ') => i += 1,
+            None => {}
+            Some(_) => return None,
+        }
     }
     let mut checkbox = None;
     if chars.get(i) == Some(&'[')
@@ -78,6 +87,9 @@ fn parse_marker(line: &str) -> Option<ListMarker> {
     {
         checkbox = Some(state);
         i = (i + 4).min(chars.len());
+    }
+    if bullet.is_empty() && checkbox.is_none() {
+        return None;
     }
     Some(ListMarker {
         indent,
@@ -280,6 +292,16 @@ mod tests {
         assert_eq!(m.bullet, "12.");
         assert_eq!(m.checkbox, None);
 
+        let m = parse_marker("[ ] bare task").expect("bare checkbox");
+        assert_eq!(m.bullet, "");
+        assert_eq!(m.checkbox, Some(' '));
+        assert_eq!(m.prefix_len, 4);
+        assert!(
+            parse_marker("[link](url)").is_none(),
+            "a link isn't a checkbox"
+        );
+        assert!(parse_marker("[x]y").is_none());
+
         assert!(parse_marker("plain text").is_none());
         assert!(parse_marker("-no space").is_none());
         assert!(parse_marker("**bold**").is_none());
@@ -296,6 +318,8 @@ mod tests {
             ("- [x] one", "- [ ] "),
             ("1. one", "2. "),
             ("9) one", "10) "),
+            ("[ ] bare", "[ ] "),
+            ("  [x] bare done", "  [ ] "),
         ] {
             let len = line.chars().count();
             let mut editor = editor_with(&[line], 0, len, NoteEditorMode::Insert);
@@ -384,6 +408,10 @@ mod tests {
         let mut editor = editor_with(&["- [X] shouting"], 0, 0, NoteEditorMode::Normal);
         editor.toggle_checkbox();
         assert_eq!(editor.lines(), &["- [ ] shouting"]);
+
+        let mut editor = editor_with(&["[ ] bare, cursor mid-line"], 0, 9, NoteEditorMode::Normal);
+        assert!(editor.toggle_checkbox());
+        assert_eq!(editor.lines(), &["[x] bare, cursor mid-line"]);
 
         let mut editor = editor_with(&["- plain"], 0, 0, NoteEditorMode::Normal);
         assert!(!editor.toggle_checkbox());
