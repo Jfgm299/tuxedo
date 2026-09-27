@@ -16,7 +16,7 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier};
 
-use tuxedo::app::{App, Density, Mode, View};
+use tuxedo::app::{App, Density, EditorKey, Mode, NoteEditorMode, NoteEditorState, View};
 use tuxedo::config::Config;
 use tuxedo::sample;
 use tuxedo::theme;
@@ -29,9 +29,38 @@ const ROWS: u16 = 32;
 const CW: f32 = 8.0;
 const CH: f32 = 16.0;
 
+/// The note shown in the notes scenes: headings, a task list with a nested
+/// item, a long line that soft-wraps, a quote and a table.
+const NOTE: &str = "# Q2 board deck
+
+Draft due **Wednesday**, keep it to *ten slides*.
+
+## Outline
+
+- [x] Revenue and burn vs. plan
+- [ ] Hiring: the senior eng rubric, both open roles and the new offer bands
+  - [ ] Pipeline numbers from the recruiter
+- [ ] Roadmap
+
+> Ask Dana for the churn chart.
+
+| Slide   | Owner |
+|---------|-------|
+| Revenue | Me    |
+| Hiring  | Sam   |
+";
+
 fn main() -> std::io::Result<()> {
     let out = PathBuf::from("docs/screenshots");
     fs::create_dir_all(&out)?;
+    // Register the ready-made themes in docs/themes (as if copied into the
+    // user's themes dir), so the custom-theme scene can select one.
+    let (user_themes, _) = theme::load_user_themes(Path::new("docs/themes"));
+    theme::init(user_themes);
+    let note_dir = std::env::temp_dir().join("tuxedo-screenshots-notes");
+    fs::create_dir_all(&note_dir)?;
+    let note_path = note_dir.join("deck.md");
+    fs::write(&note_path, NOTE)?;
 
     // Render every scene at Compact density so the screenshots stay
     // consistent and pack the most content per frame.
@@ -88,12 +117,84 @@ fn main() -> std::io::Result<()> {
     save(&app, &out.join("empty.svg"))?;
 
     // 7. List view in every built-in theme — for the README's themes section.
+    // (Terminal is skipped: it draws with the terminal's own palette, which
+    // an SVG can't know.)
     for (i, t) in theme::BUILT_IN.iter().enumerate() {
+        if t.name == "Terminal" {
+            continue;
+        }
         let mut app = make();
         app.prefs.set_theme_idx(i);
         let slug = t.name.to_lowercase().replace(' ', "-");
         save(&app, &out.join(format!("theme-{slug}.svg")))?;
     }
+
+    // 8. Notes: the list with two starred tasks, and a note pinned to the
+    // right panel, open in the vim-style editor (Insert mode, mid-list).
+    let starred = || {
+        let raw = sample::TODO_RAW
+            .replace(
+                "Finish Q2 board deck +work @laptop",
+                "Finish Q2 board deck +work @laptop star:1",
+            )
+            .replace(
+                "Draft hiring rubric for senior eng +work @laptop",
+                "Draft hiring rubric for senior eng +work @laptop star:1",
+            );
+        let mut app = App::new(
+            PathBuf::from("/tmp/tuxedo-screenshots.txt"),
+            raw,
+            "2026-05-06".to_string(),
+            Config::default(),
+        );
+        app.prefs.density = Density::Compact;
+        app
+    };
+    let keys = |s: &str| s.chars().map(EditorKey::Char).collect::<Vec<_>>();
+    let pin = |app: &mut App, keys: &[EditorKey]| -> NoteEditorState {
+        let mut note = NoteEditorState::load(note_path.clone(), NoteEditorMode::Normal);
+        for &k in keys {
+            note.normal_key(k);
+        }
+        app.pinned_focus = true;
+        note
+    };
+    // `10G A` on the "Roadmap" item, then Enter and some typing: the new
+    // line continues the task list by itself. INSERT mode.
+    let mut app = starred();
+    let mut note = pin(&mut app, &keys("10GA"));
+    note.newline();
+    for c in "Q3 targets".chars() {
+        note.insert_char(c);
+    }
+    app.pinned_notes.push(note);
+    save(&app, &out.join("notes-editor.svg"))?;
+
+    // 9. The same note rendered: `M` from the editor.
+    let mut app = starred();
+    let note = pin(&mut app, &keys("M"));
+    app.pinned_notes.push(note);
+    save(&app, &out.join("notes-preview.svg"))?;
+
+    // 10. The help overlay's notes page.
+    let mut app = starred();
+    app.help_notes_page = true;
+    app.mode = Mode::Help;
+    save(&app, &out.join("help-notes.svg"))?;
+
+    // 11. A custom theme from docs/themes (Catppuccin Macchiato): the note
+    // in the editor with a linewise Visual selection over the task list,
+    // in the theme's own mauve.
+    let mut app = starred();
+    if let Some(i) = theme::all()
+        .iter()
+        .position(|t| t.name == "Catppuccin Macchiato")
+    {
+        app.prefs.set_theme_idx(i);
+    }
+    let note = pin(&mut app, &keys("7GVjj"));
+    app.pinned_notes.push(note);
+    save(&app, &out.join("theme-catppuccin-macchiato.svg"))?;
 
     println!("wrote screenshots to {}", out.display());
     Ok(())
@@ -159,17 +260,22 @@ fn render_svg(buf: &Buffer) -> String {
                 continue;
             }
             let fg = fg_hex(cell.fg).unwrap_or_else(|| "#cccccc".into());
-            let weight = if cell.modifier.contains(Modifier::BOLD) {
-                " font-weight=\"bold\""
-            } else {
-                ""
-            };
+            let mut attrs = String::new();
+            if cell.modifier.contains(Modifier::BOLD) {
+                attrs.push_str(" font-weight=\"bold\"");
+            }
+            if cell.modifier.contains(Modifier::ITALIC) {
+                attrs.push_str(" font-style=\"italic\"");
+            }
+            if cell.modifier.contains(Modifier::CROSSED_OUT) {
+                attrs.push_str(" text-decoration=\"line-through\"");
+            }
             out.push_str(&format!(
-                "<text x=\"{tx:.2}\" y=\"{ty:.2}\" fill=\"{fg}\"{weight}>{ch}</text>\n",
+                "<text x=\"{tx:.2}\" y=\"{ty:.2}\" fill=\"{fg}\"{attrs}>{ch}</text>\n",
                 tx = x as f32 * CW,
                 ty = (y as f32 + 0.78) * CH,
                 fg = fg,
-                weight = weight,
+                attrs = attrs,
                 ch = escape(sym),
             ));
         }

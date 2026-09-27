@@ -58,6 +58,15 @@ the app, and **starred tasks** that stay at the top of their priority.
   the top of its own priority group — a starred (B) task sits above the other
   (B) tasks, never above an (A).
 
+![notes demo](docs/demo-notes.gif)
+
+| | |
+| --- | --- |
+| **Note editor** • a note pinned next to the list, in Insert mode: Enter continued the task list, long lines soft-wrap under their item, the border and chip show the mode. ★ marks starred tasks | ![note editor](docs/screenshots/notes-editor.svg) |
+| **Preview** • `M` renders the same note: headings, checkboxes, nested items, quotes, tables | ![note preview](docs/screenshots/notes-preview.svg) |
+| **Help, notes page** • `?` then `Tab` (or `?` from the notes list) | ![notes help](docs/screenshots/help-notes.svg) |
+| **Custom theme** • [Catppuccin Macchiato](docs/themes/catppuccin-macchiato.toml), a linewise Visual selection in the theme's own mauve — mode colors are picked from whatever theme is active | ![catppuccin macchiato](docs/screenshots/theme-catppuccin-macchiato.svg) |
+
 ### Using the notes feature
 
 | Where | Key | Does |
@@ -155,6 +164,8 @@ design rationale and implementation history of this feature.
     <pre>mise run screenshots</pre>
     <p>The hero GIF at the top is recorded with <a href="https://github.com/charmbracelet/vhs">vhs</a> from <code>docs/demo.tape</code>. Regenerate it with:</p>
     <pre>mise run demo</pre>
+    <p>The notes demo GIF comes from <code>docs/demo-notes.tape</code> (Catppuccin Macchiato, isolated config and sample data under <code>/tmp</code>):</p>
+    <pre>mise run demo_notes</pre>
 </details>
 
 ## Themes
@@ -173,6 +184,8 @@ Beyond the built-ins, tuxedo loads any `*.toml` file you drop in
 `${XDG_CONFIG_HOME:-$HOME/.config}/tuxedo/themes/`. Each one joins the `T`
 picker in sorted filename order. Ready-made themes live in
 [`docs/themes/`](docs/themes) — copy one in and press `T`:
+
+![catppuccin macchiato](docs/screenshots/theme-catppuccin-macchiato.svg)
 
 ```sh
 mkdir -p ~/.config/tuxedo/themes
