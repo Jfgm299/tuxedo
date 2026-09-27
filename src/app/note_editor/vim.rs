@@ -11,7 +11,8 @@
 //! - commands: `i a I A o O`, `x X s S D C Y J r ~`, `p P`, `u` (redo is
 //!   `Ctrl+R`, bound by the caller), Enter ticks a checkbox;
 //! - Visual mode: `v` (charwise) and `V` (linewise), extended by any
-//!   motion, then `d x y c s > <`, `o` to swap ends.
+//!   motion, then `d x y c s > <`, `o` to swap ends;
+//! - `M` switches to the rendered markdown preview (`preview.rs`).
 //!
 //! The binary maps crossterm key events onto [`EditorKey`] and calls
 //! [`NoteEditorState::normal_key`]; keeping crossterm out of here keeps this
@@ -128,6 +129,9 @@ enum Kind {
 impl NoteEditorState {
     /// Handle one key in Normal or Visual mode.
     pub fn normal_key(&mut self, key: EditorKey) -> NormalOutcome {
+        if self.mode == NoteEditorMode::Preview {
+            return self.preview_key(key);
+        }
         let outcome = self.dispatch(key);
         if self.mode != NoteEditorMode::Insert {
             self.clamp_normal_col();
@@ -726,6 +730,7 @@ impl NoteEditorState {
                 self.mode = NoteEditorMode::VisualLine;
             }
             Char(':') => self.open_command_prompt(),
+            Char('M') => self.enter_preview(),
             Enter => {
                 if !self.toggle_checkbox() && line + 1 < self.lines.len() {
                     self.cursor_line = line + 1;

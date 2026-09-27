@@ -34,6 +34,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::app::{App, NoteEditorMode, NoteEditorState, VisualSelection, wrap_indent};
 use crate::theme::Theme;
+use crate::ui::markdown;
 
 /// The status-bar chip text for an editor sub-mode.
 pub fn mode_label(mode: NoteEditorMode) -> &'static str {
@@ -42,6 +43,7 @@ pub fn mode_label(mode: NoteEditorMode) -> &'static str {
         NoteEditorMode::Insert => "INSERT",
         NoteEditorMode::Visual => "VISUAL",
         NoteEditorMode::VisualLine => "V-LINE",
+        NoteEditorMode::Preview => "PREVIEW",
     }
 }
 
@@ -65,6 +67,7 @@ pub fn mode_color(theme: &Theme, mode: NoteEditorMode) -> Color {
         NoteEditorMode::Visual | NoteEditorMode::VisualLine => {
             distinct(theme.pri_other, theme.context)
         }
+        NoteEditorMode::Preview => distinct(theme.project, theme.pri_d),
     }
 }
 
@@ -179,7 +182,11 @@ pub fn render_editor(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color).bg(theme.panel))
         .title(Line::from(vec![Span::styled(
-            format!(" {file_name} "),
+            if editor.mode() == NoteEditorMode::Preview {
+                format!(" {file_name} · preview ")
+            } else {
+                format!(" {file_name} ")
+            },
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -188,6 +195,53 @@ pub fn render_editor(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    if editor.mode() == NoteEditorMode::Preview {
+        render_preview(frame, inner, theme, editor);
+    } else {
+        render_source(frame, inner, theme, editor);
+    }
+
+    // T13: the `:`-command prompt, drawn last so it floats above the buffer
+    // text. Positioned relative to `area` (this call's own contextual
+    // Rect — the popup's box when called from `render`, the active tab's
+    // box when called from `render_pinned`), never the whole terminal.
+    if let Some(input) = editor.command_prompt() {
+        render_command_prompt(frame, area, theme, input);
+    }
+}
+
+/// The note as rendered markdown, scrolled to the preview's position
+/// (clamped here, where the rendered height is known).
+fn render_preview(frame: &mut Frame, inner: Rect, theme: &Theme, editor: &NoteEditorState) {
+    // One column of breathing room on each side.
+    let body = Rect {
+        x: inner.x + 1,
+        width: inner.width.saturating_sub(2),
+        ..inner
+    };
+    let rendered = markdown::render(&editor.lines().join("\n"), body.width as usize, theme);
+    let (top, anchor, height) = editor.preview_scroll();
+    let visible = body.height as usize;
+    height.set(visible);
+    if let Some(line) = anchor.take() {
+        top.set(rendered.row_for_source_line(line));
+    }
+    let max_top = rendered.lines.len().saturating_sub(visible);
+    top.set(top.get().min(max_top));
+    let lines: Vec<Line> = rendered
+        .lines
+        .into_iter()
+        .skip(top.get())
+        .take(visible)
+        .collect();
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(theme.panel)),
+        body,
+    );
+}
+
+/// The note's source text: soft-wrapped, with cursor and Visual selection.
+fn render_source(frame: &mut Frame, inner: Rect, theme: &Theme, editor: &NoteEditorState) {
     let rows = visual_rows(editor, inner.width as usize);
     let top = scroll_to_cursor(editor, &rows, inner.height as usize);
     let selection = editor.visual_selection();
@@ -202,14 +256,6 @@ pub fn render_editor(
         Paragraph::new(rendered).style(Style::default().bg(theme.panel)),
         inner,
     );
-
-    // T13: the `:`-command prompt, drawn last so it floats above the buffer
-    // text. Positioned relative to `area` (this call's own contextual
-    // Rect — the popup's box when called from `render`, the active tab's
-    // box when called from `render_pinned`), never the whole terminal.
-    if let Some(input) = editor.command_prompt() {
-        render_command_prompt(frame, area, theme, input);
-    }
 }
 
 /// A small rounded-border box near the top of `area`, horizontally centered

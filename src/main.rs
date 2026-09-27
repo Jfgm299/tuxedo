@@ -587,6 +587,7 @@ fn handle_notes(app: &mut App, key: KeyEvent) {
         KeyCode::Char('u') => app.unlink_selected_note(),
         KeyCode::Char('e') => app.open_note_editor_normal(),
         KeyCode::Char('i') => app.open_note_editor_insert(),
+        KeyCode::Char('p') => app.open_note_editor_preview(),
         // Round 3 feedback: `z` while just browsing the list (no floating
         // editor open yet -- that case is intercepted above, ahead of this
         // match) pins the selected note directly into the right-docked
@@ -737,6 +738,9 @@ fn handle_note_editor_normal(editor: &mut NoteEditorState, key: KeyEvent) -> Not
             }
             KeyCode::Char('r') => {
                 editor.redo();
+            }
+            KeyCode::Char(c @ ('d' | 'u')) if editor.mode() == NoteEditorMode::Preview => {
+                editor.scroll_preview_half_page(c == 'd');
             }
             _ => {}
         }

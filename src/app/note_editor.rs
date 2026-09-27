@@ -31,6 +31,7 @@ use super::App;
 mod history;
 mod lists;
 mod motions;
+mod preview;
 mod vim;
 
 pub use lists::wrap_indent;
@@ -50,6 +51,8 @@ pub enum NoteEditorMode {
     Visual,
     /// Linewise visual selection (`V`), anchored at `visual_anchor`.
     VisualLine,
+    /// The note rendered as markdown, read-only (see `preview.rs`).
+    Preview,
 }
 
 impl NoteEditorMode {
@@ -121,6 +124,8 @@ pub struct NoteEditorState {
     /// which only knows the viewport size at draw time — hence a `Cell`,
     /// updated through the `&self` the renderer gets.
     scroll_top: std::cell::Cell<usize>,
+    /// Scroll state of Preview mode.
+    preview: preview::PreviewScroll,
 }
 
 /// What [`NoteEditorState::execute_command_prompt`] decided for the typed
@@ -173,6 +178,7 @@ impl NoteEditorState {
             register: None,
             clipboard_out: None,
             scroll_top: std::cell::Cell::new(0),
+            preview: preview::PreviewScroll::default(),
         }
     }
 
@@ -208,7 +214,7 @@ impl NoteEditorState {
     /// `Tab`) in this state, so e.g. the `z` in `rz` still reaches the
     /// editor.
     pub fn is_idle(&self) -> bool {
-        self.mode == NoteEditorMode::Normal
+        matches!(self.mode, NoteEditorMode::Normal | NoteEditorMode::Preview)
             && self.command_prompt.is_none()
             && self.pending == vim::Pending::None
             && self.count.is_none()
@@ -547,6 +553,11 @@ impl App {
     /// (`i` from the notes list, mirrors `draft_set_insert`).
     pub fn open_note_editor_insert(&mut self) {
         self.open_note_editor(NoteEditorMode::Insert);
+    }
+
+    /// `p` from the notes list: open the selected note rendered.
+    pub fn open_note_editor_preview(&mut self) {
+        self.open_note_editor(NoteEditorMode::Preview);
     }
 
     /// The note editor that currently receives keystrokes, if any: the

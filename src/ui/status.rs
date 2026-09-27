@@ -90,7 +90,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             Mode::Welcome => "c create ./todo.txt · s open sample · q quit",
             // With an editor open, the focused-editor branch above wins.
             Mode::Notes => {
-                "j/k navigate · e/i edit · z zoom · n new · r rename · d delete · u unlink · Esc close"
+                "j/k navigate · e/i edit · p preview · z zoom · n new · r rename · d delete · u unlink · Esc close"
             }
             _ => {
                 "j/k · n new · r reschedule · x done · o notes · z pin · / search · ? help · u undo · q quit"
@@ -199,7 +199,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 fn note_editor_hint(mode: NoteEditorMode, tail: &str) -> String {
     let body = match mode {
         NoteEditorMode::Normal => {
-            "hjkl w b e 0 $ gg G move · i a o insert · v V visual · d c y p · u undo · Enter tick [ ] · E $EDITOR · : cmd"
+            "hjkl w b e 0 $ gg G move · i a o insert · v V visual · d c y p · u undo · Enter tick [ ] · M preview · E $EDITOR · : cmd"
         }
         NoteEditorMode::Insert => {
             "type to edit · Enter continues lists · Tab/S-Tab nest · Ctrl+S save · Esc normal"
@@ -207,8 +207,11 @@ fn note_editor_hint(mode: NoteEditorMode, tail: &str) -> String {
         NoteEditorMode::Visual | NoteEditorMode::VisualLine => {
             "motions extend · d delete · y yank · c change · > < indent · o other end · Esc cancel"
         }
+        NoteEditorMode::Preview => {
+            "j/k scroll · space/b page · Ctrl-d/u half · gg G · p edit · i insert · E $EDITOR"
+        }
     };
-    if mode == NoteEditorMode::Normal {
+    if matches!(mode, NoteEditorMode::Normal | NoteEditorMode::Preview) {
         format!("{body} · {tail}")
     } else {
         body.to_string()

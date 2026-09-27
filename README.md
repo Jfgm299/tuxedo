@@ -37,6 +37,8 @@ can carry one or more markdown notes, edited without leaving the app.
   everyday subset of vim (motions, operators, counts, Visual mode, undo,
   yank/put to the system clipboard), continues markdown lists as you type,
   and soft-wraps long lines to the window width without touching the file.
+  `M` (or `p` from the notes list) shows the note rendered — headings,
+  checkboxes, quotes, code blocks, tables — always current with the buffer.
   `E` hands the note to your real `$EDITOR` when you need more.
 - **Pin a note to a right-docked panel** and keep using the rest of the app
   alongside it, with several notes pinned as switchable tabs.
@@ -60,6 +62,7 @@ can carry one or more markdown notes, edited without leaving the app.
 | | `d` then `y`/`n` | Delete the selected note, with confirmation |
 | | `u` | Unlink (moves it out, doesn't delete the file) |
 | | `e` / `i` | Open the selected note in the editor (Normal / Insert) |
+| | `p` | Open the selected note rendered (preview) |
 | | `z` | Pin the selected note straight to the side panel |
 | | Esc | Close the popup |
 | Editor, Normal | `h j k l` / arrows, `w b e` (`W B E`), `0 ^ $`, `gg G`, `{ }` | Move; counts work (`3j`, `2w`) |
@@ -69,12 +72,16 @@ can carry one or more markdown notes, edited without leaving the app.
 | | `u` / `Ctrl+R` | Undo / redo (a whole Insert session is one step) |
 | | `v` / `V` | Visual (charwise / linewise); then `d y c > <`, `o` swaps ends |
 | | Enter | Tick / untick the `- [ ]` checkbox on the cursor line |
+| | `M` | Switch to the rendered markdown preview |
 | | `E` | Save and open the note in `$EDITOR` (reloaded when it exits) |
 | | Esc | Back to the list (refused while there are unsaved changes) |
 | Editor, Insert | arrows, Home/End, Delete | Move / edit without leaving Insert |
 | | Enter | New line, continuing `-` / `*` / `1.` / `- [ ]` lists; on an empty item it ends (or un-nests) the list |
 | | Tab / Shift+Tab | Nest / un-nest a list item |
 | | Esc | Back to Normal |
+| Preview | `j`/`k`, Space/`b`, `Ctrl+D`/`Ctrl+U`, `gg`/`G` | Scroll by line / page / half page, top / bottom |
+| | `p` (or `e`) / `i` | Back to the editor in Normal / Insert mode |
+| | Esc | Back to the list |
 | Editor, any mode | `Ctrl+S` | Save |
 | | `:w` `:q` `:q!` `:wq` `:x` | Save / close / discard and close / save-then-close, vim-style |
 | | `z` | Pin this note to the right panel / toggle focus into or out of it |
