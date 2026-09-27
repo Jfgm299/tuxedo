@@ -6,6 +6,13 @@
 //!
 //! Pure function of (text, width, theme): the editor re-renders it on every
 //! frame, so the preview is always current with the buffer.
+//!
+//! Two deliberate departures from strict CommonMark, because notes are
+//! written line by line (the Obsidian / GitHub-comment convention):
+//! - a single newline is shown as a line break, keeping the next line's
+//!   extra indentation, instead of joining the lines into one paragraph;
+//! - a line starting with a bare `[ ]` / `[x]` checkbox (no `- ` before it)
+//!   is shown as a task item.
 
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Modifier, Style};
@@ -38,6 +45,7 @@ impl Rendered {
 }
 
 pub fn render(text: &str, width: usize, theme: &Theme) -> Rendered {
+    let text = &bare_checkboxes_as_items(text);
     let width = width.max(8);
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
@@ -52,12 +60,36 @@ pub fn render(text: &str, width: usize, theme: &Theme) -> Rendered {
             .saturating_sub(1)
     };
 
+    let column_of = |byte: usize| byte - line_starts[line_of(byte)];
+
     let mut b = Builder::new(width, theme);
+    // Column where the current block's text starts in the source, to tell a
+    // continuation line's extra indentation from the block's own.
+    let mut text_col: Option<usize> = None;
     for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
-        if let Event::Start(tag) = &event
-            && is_block(tag)
-        {
-            b.src = line_of(range.start);
+        match &event {
+            Event::Start(tag) if is_block(tag) => {
+                b.src = line_of(range.start);
+                b.line_indent = 0;
+                text_col = None;
+            }
+            Event::Text(_) | Event::Code(_) | Event::Start(_) if text_col.is_none() => {
+                text_col = Some(column_of(range.start));
+            }
+            Event::SoftBreak => {
+                b.flush();
+                let next_line = line_of(range.start) + 1;
+                let indent = line_starts.get(next_line).map_or(0, |&start| {
+                    text[start..]
+                        .chars()
+                        .take_while(|c| *c == ' ' || *c == '\t')
+                        .map(|c| if c == '\t' { 4 } else { 1 })
+                        .sum::<usize>()
+                });
+                b.line_indent = indent.saturating_sub(text_col.unwrap_or(0));
+                continue;
+            }
+            _ => {}
         }
         b.event(event);
     }
@@ -115,6 +147,9 @@ struct Builder<'t> {
     link: Option<String>,
     /// Put a blank line before the next block.
     gap: bool,
+    /// Extra indentation of the current source line within its paragraph
+    /// (a continuation line indented deeper than the paragraph's first).
+    line_indent: usize,
 }
 
 impl<'t> Builder<'t> {
@@ -135,6 +170,7 @@ impl<'t> Builder<'t> {
             table: None,
             link: None,
             gap: false,
+            line_indent: 0,
         }
     }
 
@@ -443,7 +479,7 @@ impl<'t> Builder<'t> {
 
     /// Columns taken by list nesting (not counting quote bars).
     fn indent_width(&self) -> usize {
-        self.item_indents.iter().sum::<usize>() + self.quote_depth * 2
+        self.item_indents.iter().sum::<usize>() + self.quote_depth * 2 + self.line_indent
     }
 
     /// The prefix of the next output line: quote bars, then list
@@ -461,6 +497,9 @@ impl<'t> Builder<'t> {
                 prefix.push(marker);
             }
             None => prefix.push((" ".repeat(total), Style::default())),
+        }
+        if self.line_indent > 0 {
+            prefix.push((" ".repeat(self.line_indent), Style::default()));
         }
         prefix
     }
@@ -560,6 +599,40 @@ impl<'t> Builder<'t> {
         }
         self.emit(rule("└", "┴", "┘"));
     }
+}
+
+/// Turn lines starting with a bare `[ ]` / `[x]` checkbox into `- [ ]`
+/// task items, outside fenced code blocks. Line count is unchanged, so
+/// buffer line numbers still map onto the result.
+fn bare_checkboxes_as_items(text: &str) -> String {
+    let mut in_fence = false;
+    let mut out = String::with_capacity(text.len() + 16);
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+        }
+        let is_box = |s: &str| {
+            let b = s.as_bytes();
+            b.len() >= 3
+                && b[0] == b'['
+                && matches!(b[1], b' ' | b'x' | b'X')
+                && b[2] == b']'
+                && (b.len() == 3 || b[3] == b' ')
+        };
+        if !in_fence && is_box(trimmed) {
+            let indent = &line[..line.len() - trimmed.len()];
+            out.push_str(indent);
+            out.push_str("- ");
+            out.push_str(trimmed);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 /// HTML blocks end with a newline; inline HTML doesn't.
@@ -810,14 +883,44 @@ mod tests {
     fn source_lines_map_rows_back_to_blocks() {
         let md = "# T\n\npara one\nstill para\n\n- item";
         let r = render(md, 40, &MUTED);
-        // "T", rule, "", "para one still para", "", "• item"
+        // "T", rule, "", "para one", "still para", "", "• item"
         assert_eq!(r.row_for_source_line(0), 0);
         assert_eq!(
             r.row_for_source_line(3),
             3,
             "mid-paragraph → paragraph start"
         );
-        assert_eq!(r.row_for_source_line(5), 5);
+        assert_eq!(r.row_for_source_line(5), 6);
+    }
+
+    #[test]
+    fn single_newlines_are_line_breaks_keeping_extra_indent() {
+        let md = "first line\nsecond line\n    indented\n\nnext para";
+        let r = render(md, 40, &MUTED);
+        assert_eq!(
+            plain(&r),
+            ["first line", "second line", "    indented", "", "next para"]
+        );
+    }
+
+    #[test]
+    fn bare_checkbox_lines_render_as_task_items() {
+        // The shape of a real note: bare `[ ]` lines, one with deeper
+        // indented `- ` lines under it.
+        let md = "[ ] Replantear invitados\n[x] Hecho\n[ ] App de Settings\n      - Cuenta\n      - Workspace\n\n```\n[ ] not in code\n```";
+        let r = render(md, 40, &MUTED);
+        assert_eq!(
+            plain(&r),
+            [
+                "☐ Replantear invitados",
+                "☑ Hecho",
+                "☐ App de Settings",
+                "  - Cuenta",
+                "  - Workspace",
+                "",
+                " [ ] not in code",
+            ]
+        );
     }
 
     #[test]
