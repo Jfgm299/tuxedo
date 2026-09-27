@@ -32,9 +32,12 @@ can carry one or more markdown notes, edited without leaving the app.
   (`notes:<id>/` token), replacing upstream's single-file `note:<path>` model.
 - **A popup to browse/manage them** (`o` on a task) instead of shelling out
   to `$EDITOR`.
-- **An embedded markdown editor** (vim-like Normal/Insert modes) built into
-  the TUI itself — no external editor process, and it respects tuxedo's
-  active theme.
+- **An embedded markdown editor** built into the TUI itself — no external
+  editor process, and it respects tuxedo's active theme. It speaks the
+  everyday subset of vim (motions, operators, counts, Visual mode, undo,
+  yank/put to the system clipboard), continues markdown lists as you type,
+  and soft-wraps long lines to the window width without touching the file.
+  `E` hands the note to your real `$EDITOR` when you need more.
 - **Pin a note to a right-docked panel** and keep using the rest of the app
   alongside it, with several notes pinned as switchable tabs.
 - **A `:`-command popup** inside the editor (`:w` / `:q` / `:wq` / `:x`),
@@ -42,6 +45,9 @@ can carry one or more markdown notes, edited without leaving the app.
   popup, so `:w`/`:wq` muscle memory works without needing real vim.
 - The command palette (`Ctrl+P`, now also reachable from inside the notes
   popup) lists every notes action too.
+- **Starred tasks**: `*` stars a task (a `star:1` tag), which floats it to
+  the top of its own priority group — a starred (B) task sits above the other
+  (B) tasks, never above an (A).
 
 ### Using the notes feature
 
@@ -56,14 +62,30 @@ can carry one or more markdown notes, edited without leaving the app.
 | | `e` / `i` | Open the selected note in the editor (Normal / Insert) |
 | | `z` | Pin the selected note straight to the side panel |
 | | Esc | Close the popup |
-| Editor | `h`/`j`/`k`/`l` or arrows | Move (Normal mode) |
-| | `i` | Enter Insert mode |
-| | Esc | Insert → Normal → back to the list (one step at a time) |
-| | `Ctrl+S` | Save |
-| | `:w` `:q` `:wq` `:x` | Save / close / save-then-close, vim-style |
+| Editor, Normal | `h j k l` / arrows, `w b e` (`W B E`), `0 ^ $`, `gg G`, `{ }` | Move; counts work (`3j`, `2w`) |
+| | `i a I A o O` | Enter Insert mode (`o` continues a list item) |
+| | `d c y` + motion, `dd cc yy`, `>> <<` | Delete / change / yank / indent |
+| | `x X s S D C Y J r ~ p P` | The usual vim one-key edits |
+| | `u` / `Ctrl+R` | Undo / redo (a whole Insert session is one step) |
+| | `v` / `V` | Visual (charwise / linewise); then `d y c > <`, `o` swaps ends |
+| | Enter | Tick / untick the `- [ ]` checkbox on the cursor line |
+| | `E` | Save and open the note in `$EDITOR` (reloaded when it exits) |
+| | Esc | Back to the list (refused while there are unsaved changes) |
+| Editor, Insert | arrows, Home/End, Delete | Move / edit without leaving Insert |
+| | Enter | New line, continuing `-` / `*` / `1.` / `- [ ]` lists; on an empty item it ends (or un-nests) the list |
+| | Tab / Shift+Tab | Nest / un-nest a list item |
+| | Esc | Back to Normal |
+| Editor, any mode | `Ctrl+S` | Save |
+| | `:w` `:q` `:q!` `:wq` `:x` | Save / close / discard and close / save-then-close, vim-style |
 | | `z` | Pin this note to the right panel / toggle focus into or out of it |
 | | `Z` | Close the pinned note, from anywhere |
 | | `Tab` / `Shift+Tab` | Switch between pinned notes (when more than one is pinned) |
+| Task list | `*` | Star / unstar the task: top of its priority group |
+
+Yanks and deletes in the editor are also copied to the system clipboard via
+OSC 52 (most modern terminals; in tmux, `set -g set-clipboard on`). To paste
+from the system clipboard, use your terminal's paste in Insert mode — it
+goes in verbatim, lists and all.
 
 ### Install
 
