@@ -182,6 +182,18 @@ impl NoteEditorState {
         self.cursor_col = (self.cursor_col + 1).min(self.current_line_len());
     }
 
+    /// Jump to column 0 of the current line (Home, and vim's `0`).
+    pub fn move_line_start(&mut self) {
+        self.cursor_col = 0;
+    }
+
+    /// Jump past the last character of the current line (End). In Insert
+    /// sub-mode that is where typing appends; vim's `$` (Normal) lands on
+    /// the last character instead — see `motions.rs`.
+    pub fn move_line_end(&mut self) {
+        self.cursor_col = self.current_line_len();
+    }
+
     /// Enter Insert sub-mode (`i`).
     pub fn enter_insert(&mut self) {
         self.mode = NoteEditorMode::Insert;
@@ -298,6 +310,24 @@ impl NoteEditorState {
         self.cursor_line += 1;
         self.cursor_col = 0;
         self.dirty = true;
+    }
+
+    /// Delete the character under the cursor (the Delete key). At the end
+    /// of a line, joins the next line onto this one instead; a no-op at the
+    /// very end of the buffer.
+    pub fn delete_forward(&mut self) {
+        let len = self.current_line_len();
+        if self.cursor_col < len {
+            let line = &mut self.lines[self.cursor_line];
+            let start = byte_offset(line, self.cursor_col);
+            let end = byte_offset(line, self.cursor_col + 1);
+            line.drain(start..end);
+            self.dirty = true;
+        } else if self.cursor_line + 1 < self.lines.len() {
+            let next = self.lines.remove(self.cursor_line + 1);
+            self.lines[self.cursor_line].push_str(&next);
+            self.dirty = true;
+        }
     }
 
     /// Delete the character before the cursor. At column 0 of a non-first

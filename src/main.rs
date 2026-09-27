@@ -733,6 +733,13 @@ fn handle_note_editor_insert(editor: &mut NoteEditorState, key: KeyEvent) -> Not
         KeyCode::Esc => editor.esc_to_normal(),
         KeyCode::Enter => editor.split_line(),
         KeyCode::Backspace => editor.backspace(),
+        KeyCode::Delete => editor.delete_forward(),
+        KeyCode::Left => editor.move_left(),
+        KeyCode::Right => editor.move_right(),
+        KeyCode::Up => editor.move_up(),
+        KeyCode::Down => editor.move_down(),
+        KeyCode::Home => editor.move_line_start(),
+        KeyCode::End => editor.move_line_end(),
         KeyCode::Char(c) => editor.insert_char(c),
         _ => {}
     }
@@ -3016,6 +3023,33 @@ mod tests {
             .as_ref()
             .expect("editor opened");
         assert_eq!(editor.mode(), NoteEditorMode::Insert);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn insert_submode_arrows_home_end_and_delete_move_and_edit() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-editor-arrows-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+        let code = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
+
+        handle_notes(&mut app, key('i'));
+        handle_notes(&mut app, code(KeyCode::End));
+        handle_notes(&mut app, key('!'));
+        handle_notes(&mut app, code(KeyCode::Home));
+        handle_notes(&mut app, code(KeyCode::Right));
+        handle_notes(&mut app, code(KeyCode::Delete));
+        handle_notes(&mut app, code(KeyCode::Left));
+        handle_notes(&mut app, key('C'));
+
+        let editor = app.notes_popup.active_editor.as_ref().expect("editor");
+        assert_eq!(editor.mode(), NoteEditorMode::Insert, "arrows keep Insert");
+        assert_eq!(editor.lines(), &["Ccntent a!"]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
