@@ -1,6 +1,7 @@
 use super::App;
 use super::types::{Sort, View};
 use crate::core::filter::{self, ListDueBucket};
+use crate::todo::Task;
 
 /// One entry per visible row, parallel to `visible_cache`. Renderers detect
 /// group transitions by comparing successive entries; under `Sort::File` every
@@ -72,6 +73,12 @@ impl App {
                 .map(|&i| GroupKey::ListDue(filter::due_bucket(&tasks[i], today, week_start)))
                 .collect(),
         };
+        // Starred tasks float to the top of their own group (priority
+        // bucket, or due bucket), keeping the sort order among themselves
+        // and among the rest. Plain file order is left untouched.
+        if self.prefs.sort != Sort::File {
+            float_starred_within_groups(&mut idxs, &groups, tasks);
+        }
         self.visible_groups = groups;
         self.visible_cache = idxs;
     }
@@ -124,11 +131,56 @@ impl App {
     }
 }
 
+/// Stable-partition each run of equal `groups` entries so starred tasks
+/// come first within it. `groups` runs are contiguous because the list was
+/// just sorted by the key the groups are derived from.
+fn float_starred_within_groups(idxs: &mut [usize], groups: &[GroupKey], tasks: &[Task]) {
+    let mut start = 0;
+    while start < idxs.len() {
+        let end = start
+            + groups[start..]
+                .iter()
+                .take_while(|g| **g == groups[start])
+                .count();
+        idxs[start..end].sort_by_key(|&i| !tasks[i].starred);
+        start = end;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::test_support::build_app;
     use crate::core::filter::ListDueBucket;
+
+    fn visible_bodies(app: &App) -> Vec<String> {
+        app.visible_indices()
+            .iter()
+            .map(|&i| crate::todo::body_only(&app.tasks()[i].raw))
+            .collect()
+    }
+
+    #[test]
+    fn starred_tasks_float_to_the_top_of_their_priority_group() {
+        let mut app = build_app(
+            "(A) a1 due:2026-05-01\n(A) a2 star:1 due:2026-06-01\n(B) b1\n(B) b2 star:1\nnone1\nnone2 star:1\n",
+        );
+        app.prefs.sort = Sort::Priority;
+        app.recompute_visible();
+        assert_eq!(
+            visible_bodies(&app),
+            ["a2", "a1", "b2", "b1", "none2", "none1"],
+            "starred first within A, B and unprioritized — never above a higher priority"
+        );
+    }
+
+    #[test]
+    fn starred_tasks_float_within_due_buckets_but_not_in_file_order() {
+        let mut app = build_app("x1 due:2026-05-01\nx2 star:1 due:2026-05-03\nlater star:1\n");
+        app.prefs.sort = Sort::File;
+        app.recompute_visible();
+        assert_eq!(visible_bodies(&app), ["x1", "x2", "later"]);
+    }
 
     #[test]
     fn search_matches_subsequence() {

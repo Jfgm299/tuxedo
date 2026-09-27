@@ -29,7 +29,7 @@ const EDITING: Section = (
         ("r", "reschedule task"),
         ("x", "toggle complete"),
         ("dd", "delete task"),
-        ("p", "cycle priority A→B→C→·"),
+        ("p / *", "priority A→B→C / star"),
         ("J / K", "move task down / up"),
         ("c", "add/remove context"),
         ("+", "add project"),

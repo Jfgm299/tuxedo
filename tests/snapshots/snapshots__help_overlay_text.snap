@@ -15,7 +15,7 @@ expression: buffer_to_text(&buf)
      │    r                 reschedule task           A                 archive completed     │rd   
  CONT│    x                 toggle complete           H                 show done in list     │     
    @e│    dd                delete task               F                 show future in list   │     
-   @h│    p                 cycle priority A→B→C→·    [ / ]             toggle filter / detail│     
+   @h│    p / *             priority A→B→C / star     [ / ]             toggle filter / detail│     
    @l│    J / K             move task down / up       T                 theme picker          │     
    @p│    c                 add/remove context        D                 cycle density         │     
      │    +                 add project               L                 toggle line numbers   │     

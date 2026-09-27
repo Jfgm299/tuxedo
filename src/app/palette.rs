@@ -87,6 +87,11 @@ pub const ENTRIES: &[PaletteEntry] = &[
         dispatch: PaletteDispatch::Global(Action::CyclePriority),
     },
     PaletteEntry {
+        label: "star / unstar task (top of its priority)",
+        keys: "*",
+        dispatch: PaletteDispatch::Global(Action::ToggleStar),
+    },
+    PaletteEntry {
         label: "move task down",
         keys: "J",
         dispatch: PaletteDispatch::Global(Action::MoveTaskDown),
@@ -690,6 +695,7 @@ mod tests {
             Action::ToggleComplete,
             Action::Delete,
             Action::CyclePriority,
+            Action::ToggleStar,
             Action::MoveTaskDown,
             Action::MoveTaskUp,
             Action::BeginSearch,

@@ -16,8 +16,8 @@ use crate::todo::Task;
 
 fn same_sort_key(sort: Sort, a: &Task, b: &Task) -> bool {
     match sort {
-        Sort::Priority => a.priority == b.priority && a.due == b.due,
-        Sort::Due => a.due == b.due,
+        Sort::Priority => a.priority == b.priority && a.starred == b.starred && a.due == b.due,
+        Sort::Due => a.starred == b.starred && a.due == b.due,
         Sort::File => true,
     }
 }
@@ -40,6 +40,23 @@ impl App {
             CompleteOutcome::Aborted(r) => self.handle_reconcile_abort(r),
             CompleteOutcome::OutOfRange => {}
             CompleteOutcome::Error(e) => self.flash(format!("complete failed: {e}")),
+        }
+    }
+
+    /// `*`: star or unstar the task at `abs`. A starred task sorts to the
+    /// top of its priority (or due) group.
+    pub fn toggle_star(&mut self, abs: usize) {
+        let Some(star) = self.store.tasks().get(abs).map(|t| !t.starred) else {
+            return;
+        };
+        match self.store.set_starred_at(abs, star) {
+            EditOutcome::Saved { abs } => {
+                self.flash(if star { "starred" } else { "unstarred" });
+                self.after_mutation(abs);
+            }
+            EditOutcome::Aborted(r) => self.handle_reconcile_abort(r),
+            EditOutcome::Error(e) => self.flash(format!("star failed: {e}")),
+            EditOutcome::Empty | EditOutcome::OutOfRange | EditOutcome::TermNotFound => {}
         }
     }
 

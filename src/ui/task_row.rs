@@ -3,7 +3,7 @@ use ratatui::text::{Line, Span};
 
 use crate::search::subseq_match_ci;
 use crate::theme::Theme;
-use crate::todo::{Task, body_after_priority};
+use crate::todo::{Task, body_after_priority, is_star_token};
 
 #[derive(Clone, Copy, Default)]
 pub struct RowOpts<'a> {
@@ -74,6 +74,16 @@ pub fn build_line<'a>(task: &'a Task, opts: RowOpts<'a>, theme: &Theme) -> Line<
     } else {
         spans.push(Span::raw("    "));
     }
+    // The `star:1` tag itself is hidden from the body below; this glyph
+    // stands in for it.
+    if task.starred && !task.done {
+        spans.push(Span::styled(
+            "★ ",
+            Style::default()
+                .fg(theme.pri_b)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
 
     // body — walk &str slices instead of collecting Vec<char>. Spans borrow
     // straight from `task.raw`, so most rows allocate only for the format!()
@@ -103,7 +113,7 @@ pub fn build_line<'a>(task: &'a Task, opts: RowOpts<'a>, theme: &Theme) -> Line<
         }
         let tok_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
         let token = &rest[..tok_end];
-        if is_hidden_kv(token, opts.hidden_keys) {
+        if is_hidden_kv(token, opts.hidden_keys) || is_star_token(token) {
             // Drop the separator we just emitted for this token...
             if pushed_ws {
                 spans.pop();
@@ -371,6 +381,15 @@ mod tests {
     use super::*;
     use crate::theme::MUTED;
     use crate::todo::parse_line;
+
+    #[test]
+    fn starred_task_shows_a_star_glyph_instead_of_its_tag() {
+        let task = parse_line("(A) Book hotel star:1").unwrap();
+        let line = build_line(&task, RowOpts::default(), &MUTED);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("★ Book hotel"), "{text}");
+        assert!(!text.contains("star:1"), "{text}");
+    }
 
     #[test]
     fn build_line_does_not_panic_on_unicode_with_match_term() {

@@ -20,6 +20,9 @@ pub enum Action {
     Delete,
     Reschedule,
     CyclePriority,
+    /// `*` — star/unstar the current task (`star:1`): starred tasks sort to
+    /// the top of their priority group.
+    ToggleStar,
     MoveTaskDown,
     MoveTaskUp,
     BeginSearch,
@@ -95,6 +98,7 @@ impl Action {
             "delete" => Some(Self::Delete),
             "reschedule" => Some(Self::Reschedule),
             "cycle_priority" => Some(Self::CyclePriority),
+            "toggle_star" | "star" => Some(Self::ToggleStar),
             "move_task_down" => Some(Self::MoveTaskDown),
             "move_task_up" => Some(Self::MoveTaskUp),
             "begin_search" | "search" => Some(Self::BeginSearch),

@@ -56,6 +56,20 @@ pub struct Task {
     /// filter parses it on demand via `crate::threshold`.
     pub threshold: Option<String>,
     pub notes: Vec<String>,
+    /// Starred with a `star:1` tag (see [`STAR_KEY`]): floats to the top of
+    /// its priority/due group in the list, above unstarred tasks.
+    pub starred: bool,
+}
+
+/// The `key:value` key marking a starred task, e.g. `star:1`. A plain
+/// todo.txt tag, so other todo.txt tools keep it intact and just ignore it.
+pub const STAR_KEY: &str = "star";
+
+/// Whether `tok` is a star tag (`star:<anything>`), which task rows hide
+/// in favor of a ★ glyph.
+pub fn is_star_token(tok: &str) -> bool {
+    tok.split_once(':')
+        .is_some_and(|(k, v)| k == STAR_KEY && !v.is_empty())
 }
 
 pub fn parse_line(raw: &str) -> Result<Task, ParseError> {
@@ -94,6 +108,7 @@ pub fn parse_line(raw: &str) -> Result<Task, ParseError> {
     let rec = find_kv(rest, "rec");
     let threshold = find_kv(rest, "t");
     let notes = find_quoted_kv(rest, "note");
+    let starred = find_kv(rest, STAR_KEY).is_some_and(|v| v != "0");
     let clean_raw = body_after_quoted_kv(line);
 
     Ok(Task {
@@ -109,6 +124,7 @@ pub fn parse_line(raw: &str) -> Result<Task, ParseError> {
         rec,
         threshold,
         notes,
+        starred,
     })
 }
 
@@ -303,6 +319,21 @@ impl Task {
         };
         self.set_priority(next)?;
         Ok(next)
+    }
+
+    /// Star or unstar this task: drop every `star:` tag, then append
+    /// `star:1` when `star`. Nothing else on the line changes.
+    pub fn set_starred(&mut self, star: bool) -> Result<(), ParseError> {
+        let mut tokens: Vec<&str> = self
+            .raw
+            .split_whitespace()
+            .filter(|tok| !is_star_token(tok))
+            .collect();
+        let tag = format!("{STAR_KEY}:1");
+        if star {
+            tokens.push(&tag);
+        }
+        self.replace_from_raw(&tokens.join(" "))
     }
 
     /// Append `+name` to the line. Returns `Ok(true)` if added, `Ok(false)`
@@ -672,5 +703,26 @@ mod tests {
         for (a, b) in parsed.iter().zip(reparsed.iter()) {
             assert_eq!(a.raw, b.raw);
         }
+    }
+
+    #[test]
+    fn star_tag_parses_and_toggles() {
+        let mut t = parse_line("(A) Book hotel due:2026-10-01").unwrap();
+        assert!(!t.starred);
+
+        t.set_starred(true).unwrap();
+        assert!(t.starred);
+        assert_eq!(t.raw, "(A) Book hotel due:2026-10-01 star:1");
+
+        t.set_starred(false).unwrap();
+        assert!(!t.starred);
+        assert_eq!(t.raw, "(A) Book hotel due:2026-10-01");
+
+        assert!(!parse_line("x star:0").unwrap().starred, "star:0 is off");
+        assert!(parse_line("task star:yes").unwrap().starred);
+        assert!(
+            !body_only("task star:1").contains("star"),
+            "hidden from the body"
+        );
     }
 }

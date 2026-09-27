@@ -1554,6 +1554,7 @@ fn resolve_normal_key(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) -> O
         KeyCode::Char('i') => Action::BeginEditInsert,
         KeyCode::Char('o') => Action::OpenNotes,
         KeyCode::Char('x') => Action::ToggleComplete,
+        KeyCode::Char('*') => Action::ToggleStar,
         // 'dd' chord. First press arms; second fires.
         KeyCode::Char('d') if app.chord.toggle('d') => Action::Delete,
         // 'yy' chord copies the whole line; 'yb' (after 'y' is armed) copies
@@ -1647,6 +1648,7 @@ fn apply_action(app: &mut App, action: Action) {
             | Action::BeginEdit
             | Action::BeginEditInsert
             | Action::CyclePriority
+            | Action::ToggleStar
             | Action::MoveTaskDown
             | Action::MoveTaskUp
             | Action::ToggleVisual
@@ -1732,6 +1734,11 @@ fn apply_action(app: &mut App, action: Action) {
         Action::CyclePriority => {
             if let Some(abs) = app.cur_abs() {
                 app.cycle_priority(abs);
+            }
+        }
+        Action::ToggleStar => {
+            if let Some(abs) = app.cur_abs() {
+                app.toggle_star(abs);
             }
         }
         Action::MoveTaskDown => app.move_tasks(true),
@@ -2244,6 +2251,7 @@ mod tests {
     fn p_without_chord_cycles_priority() {
         let mut app = build_app();
         assert_eq!(resolve(&mut app, key('p')), Some(Action::CyclePriority),);
+        assert_eq!(resolve(&mut app, key('*')), Some(Action::ToggleStar));
     }
 
     #[test]

@@ -230,6 +230,22 @@ impl Store {
         self.rewrite_raw(abs, &new_raw)
     }
 
+    /// Star or unstar a task (`star:1` tag).
+    pub fn set_starred_at(&mut self, abs: usize, star: bool) -> EditOutcome {
+        match self.reconcile() {
+            Reconcile::Unchanged => {}
+            other => return EditOutcome::Aborted(other),
+        }
+        if abs >= self.tasks.len() {
+            return EditOutcome::OutOfRange;
+        }
+        let mut task = self.tasks[abs].clone();
+        if let Err(e) = task.set_starred(star) {
+            return EditOutcome::Error(StoreError::Parse(e));
+        }
+        self.rewrite_raw(abs, &task.raw)
+    }
+
     /// Prepend text to the start of a task's body — after any leading
     /// priority/dates so the line stays well-formed (CLI `prepend`).
     pub fn prepend_at(&mut self, abs: usize, text: &str) -> EditOutcome {

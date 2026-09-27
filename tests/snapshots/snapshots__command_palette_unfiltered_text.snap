@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 226
 expression: buffer_to_text(&buf)
 ---
  FILTERS                   ▶▮◀ /tmp/tuxedo-snapshot.txt  •  15 tas DETAIL                           
@@ -18,7 +17,8 @@ expression: buffer_to_text(&buf)
    @errands         │   toggle complete                                      x │6                   
    @home            │   delete task                                         dd │                    
    @laptop          │   cycle priority                                       p │                    
-   @phone           │   move task down                                       J │                    
+   @phone           │   star / unstar task (top of its priority)             * │                    
+                    │   move task down                                       J │                    
                     │   move task up                                         K │                    
                     │   add project to current task                          + │                    
                     │   add or remove context on current task                c │                    
@@ -26,7 +26,6 @@ expression: buffer_to_text(&buf)
                     │   copy body to clipboard                              yb │                    
                     │   open task notes                                      o │                    
                     │   undo                                                 u │                    
-                    │   cursor down                                      j / ↓ │                    
                     │  ↑↓ / Ctrl-N/P navigate · Enter run · Esc cancel         │                    
                     └──────────────────────────────────────────────────────────┘                    
                                                                                                     
