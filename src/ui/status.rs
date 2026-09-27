@@ -77,7 +77,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 DialogInputMode::Insert => "Enter save · Esc normal",
             },
             Mode::Visual => "space toggle · x complete · dd delete · Esc cancel",
-            Mode::Help => "? close help",
+            Mode::Help => "Tab tasks ⇄ notes page · ? close help",
             Mode::Settings => "Esc back",
             Mode::PromptProject => "type +project name · Enter save · Esc cancel",
             Mode::PromptContext => "type @context name · Enter toggle · Esc cancel",
@@ -90,10 +90,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             Mode::Welcome => "c create ./todo.txt · s open sample · q quit",
             // With an editor open, the focused-editor branch above wins.
             Mode::Notes => {
-                "j/k navigate · e/i edit · p preview · z zoom · n new · r rename · d delete · u unlink · Esc close"
+                "j/k navigate · e/i edit · p preview · z zoom · n new · r rename · d delete · u unlink · ? help · Esc close"
             }
             _ => {
-                "j/k · n new · r reschedule · x done · o notes · z pin · / search · ? help · u undo · q quit"
+                "j/k · n new · r reschedule · x done · * star · o notes · z pin · / search · ? help · u undo · q quit"
             }
         }
         .into()

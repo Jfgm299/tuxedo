@@ -93,6 +93,79 @@ const FORMAT: Section = (
     ],
 );
 
+// ---- Notes page (`Tab` from the task page, or `?` in the notes popup) ----
+
+const NOTES_LIST: Section = (
+    "NOTES LIST (o on a task)",
+    &[
+        ("j / k", "navigate"),
+        ("n / r", "new / rename note"),
+        ("d / u", "delete / unlink note"),
+        ("e / i", "edit normal / insert"),
+        ("p", "rendered preview"),
+        ("z", "pin to the side panel"),
+        ("Esc", "close"),
+    ],
+);
+
+const PINNED: Section = (
+    "PINNED PANEL",
+    &[
+        ("z / Z", "focus / close pinned"),
+        ("Tab / S-Tab", "next / prev tab"),
+    ],
+);
+
+const PREVIEW: Section = (
+    "PREVIEW",
+    &[
+        ("j / k", "scroll a line"),
+        ("space / b", "page down / up"),
+        ("Ctrl-d / Ctrl-u", "half page down / up"),
+        ("gg / G", "top / bottom"),
+        ("p / i", "back to edit / insert"),
+    ],
+);
+
+const SAVE_CLOSE: Section = (
+    "SAVE & CLOSE",
+    &[
+        ("Ctrl-s / :w", "save"),
+        (":q / :q!", "close / discard"),
+        (":wq / :x", "save and close"),
+        ("E", "open in $EDITOR"),
+    ],
+);
+
+const EDITOR_NORMAL: Section = (
+    "EDITOR · NORMAL",
+    &[
+        ("h j k l", "move (counts: 3j)"),
+        ("w b e / W B E", "word / WORD motions"),
+        ("0 ^ $", "start / text / end"),
+        ("gg / G", "first / last line"),
+        ("{ / }", "prev / next paragraph"),
+        ("i a I A o O", "insert"),
+        ("d c y + motion", "delete/change/yank"),
+        ("dd cc yy >> <<", "whole lines"),
+        ("x s D C J r ~", "quick edits"),
+        ("p / P", "put after / before"),
+        ("u / Ctrl-r", "undo / redo"),
+        ("v / V", "visual / visual line"),
+        ("Enter", "tick [ ] checkbox"),
+        ("M", "markdown preview"),
+    ],
+);
+
+const EDITOR_INSERT: Section = (
+    "EDITOR · INSERT",
+    &[
+        ("Enter", "newline, keeps lists"),
+        ("Tab / S-Tab", "nest / un-nest item"),
+        ("Esc", "back to normal"),
+    ],
+);
+
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme();
     let block = Block::default()
@@ -106,13 +179,28 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" · help ".to_string(), Style::default().fg(theme.dim)),
+            Span::styled(" · help · ".to_string(), Style::default().fg(theme.dim)),
+            page_tab(theme, "tasks", !app.help_notes_page),
+            Span::styled(" ", Style::default().fg(theme.dim)),
+            page_tab(theme, "notes", app.help_notes_page),
+            Span::styled(" (Tab) ", Style::default().fg(theme.dim)),
         ]))
         .style(Style::default().bg(theme.panel));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let bg = Style::default().bg(theme.panel).fg(theme.fg);
+
+    if app.help_notes_page {
+        let lines = two_columns(
+            theme,
+            inner.width,
+            &[NOTES_LIST, PINNED, PREVIEW, SAVE_CLOSE],
+            &[EDITOR_NORMAL, EDITOR_INSERT],
+        );
+        frame.render_widget(Paragraph::new(lines).style(bg), inner);
+        return;
+    }
 
     // Keybindings (top, two columns) — divider — Format (bottom, two columns).
     // Each half splits sections across left/right; the last section in each
@@ -152,6 +240,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         divider,
     );
     frame.render_widget(Paragraph::new(fmt_lines).style(bg), fmt_area);
+}
+
+/// A page name in the title: highlighted when it's the page on screen.
+fn page_tab(theme: &Theme, name: &'static str, active: bool) -> Span<'static> {
+    if active {
+        Span::styled(
+            name,
+            Style::default()
+                .fg(theme.accent)
+                // Not underlined: underlined cells become OSC 8 links.
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(name, Style::default().fg(theme.dim))
+    }
 }
 
 /// Render `left` and `right` section lists side-by-side. Each side gets half
@@ -300,6 +403,31 @@ mod tests {
     /// uses; see the task report). Pairing costs no extra row, matching the
     /// same "opposed keys share a row" convention already used throughout
     /// this file (`j / k`, `e / i`, etc.).
+    /// The notes page must fit the same box as the task page: every
+    /// section's last row visible at the real 100x32 size.
+    #[test]
+    fn notes_page_lists_every_notes_section_without_clipping() {
+        let mut app = build_app();
+        app.help_notes_page = true;
+        let text = render_help(&app, 100, 32);
+        for needle in [
+            "NOTES LIST",
+            "Esc",
+            "PINNED PANEL",
+            "PREVIEW",
+            "back to edit / insert",
+            "SAVE & CLOSE",
+            "open in $EDITOR",
+            "EDITOR · NORMAL",
+            "markdown preview",
+            "EDITOR · INSERT",
+            "back to normal",
+        ] {
+            assert!(text.contains(needle), "missing {needle:?}: {text}");
+        }
+        assert!(!text.contains("FORMAT"), "task page content is not shown");
+    }
+
     #[test]
     fn editing_section_advertises_the_o_notes_entry_point() {
         let app = build_app();

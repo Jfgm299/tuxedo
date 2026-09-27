@@ -193,6 +193,12 @@ pub struct App {
     /// list" since `Mode` alone can't. Always `false` when `pinned_notes` is
     /// empty.
     pub pinned_focus: bool,
+    /// Which page the `?` help overlay shows: the task list's keys, or the
+    /// notes popup / editor's (`Tab` switches).
+    pub help_notes_page: bool,
+    /// Mode to return to when the help overlay closes (`Mode::Notes` when
+    /// it was opened from the notes popup).
+    pub help_return: Mode,
     /// Theme index captured when the theme picker opened, so cancel
     /// can restore it.
     theme_pick_orig: usize,
@@ -260,6 +266,8 @@ impl App {
             pinned_notes: Vec::new(),
             active_pin: 0,
             pinned_focus: false,
+            help_notes_page: false,
+            help_return: Mode::Normal,
             theme_pick_orig: 0,
             week_start: WeekStart::Sunday,
         };

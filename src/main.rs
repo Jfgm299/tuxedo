@@ -588,6 +588,11 @@ fn handle_notes(app: &mut App, key: KeyEvent) {
         KeyCode::Char('e') => app.open_note_editor_normal(),
         KeyCode::Char('i') => app.open_note_editor_insert(),
         KeyCode::Char('p') => app.open_note_editor_preview(),
+        KeyCode::Char('?') => {
+            app.help_notes_page = true;
+            app.help_return = Mode::Notes;
+            app.mode = Mode::Help;
+        }
         // Round 3 feedback: `z` while just browsing the list (no floating
         // editor open yet -- that case is intercepted above, ahead of this
         // match) pins the selected note directly into the right-docked
@@ -1319,9 +1324,19 @@ fn handle_search(app: &mut App, key: KeyEvent) {
     }
 }
 
+/// Help overlay: `Tab` / `Shift+Tab` (or `h`/`l`) switch between the task
+/// and notes pages; `?`, Esc or `q` close it, back to wherever it was
+/// opened from.
 fn handle_help(app: &mut App, key: KeyEvent) {
     if is_exit_key(key) || matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
-        app.mode = Mode::Normal;
+        app.mode = app.help_return;
+        return;
+    }
+    if matches!(
+        key.code,
+        KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('h' | 'l') | KeyCode::Left | KeyCode::Right
+    ) {
+        app.help_notes_page = !app.help_notes_page;
     }
 }
 
@@ -1442,6 +1457,7 @@ fn apply_notes_palette_action(app: &mut App, action: NotesEntryAction) {
         NotesEntryAction::Unlink => app.unlink_selected_note(),
         NotesEntryAction::OpenEditorNormal => app.open_note_editor_normal(),
         NotesEntryAction::OpenEditorInsert => app.open_note_editor_insert(),
+        NotesEntryAction::OpenPreview => app.open_note_editor_preview(),
     }
 }
 
@@ -1752,7 +1768,11 @@ fn apply_action(app: &mut App, action: Action) {
             app.draft_clear();
             app.clear_search();
         }
-        Action::OpenHelp => app.mode = Mode::Help,
+        Action::OpenHelp => {
+            app.help_notes_page = false;
+            app.help_return = Mode::Normal;
+            app.mode = Mode::Help;
+        }
         Action::OpenSettings => app.mode = Mode::Settings,
         Action::OpenCommandPalette => {
             // Snapshot the current mode (Normal or Visual) so cancel/run
@@ -3167,6 +3187,29 @@ mod tests {
         let editor = app.notes_popup.active_editor.as_ref().expect("editor");
         assert_eq!(editor.mode(), NoteEditorMode::Insert, "arrows keep Insert");
         assert_eq!(editor.lines(), &["Ccntent a!"]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn question_mark_in_the_notes_list_opens_the_notes_help_page_and_returns() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-help-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+
+        handle_notes(&mut app, key('?'));
+        assert_eq!(app.mode, Mode::Help);
+        assert!(app.help_notes_page);
+
+        handle_help(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(!app.help_notes_page, "Tab flips to the task page");
+
+        handle_help(&mut app, key('?'));
+        assert_eq!(app.mode, Mode::Notes, "back to the notes popup");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

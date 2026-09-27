@@ -41,6 +41,8 @@ pub enum NotesEntryAction {
     OpenEditorNormal,
     /// Mirrors `i`: `App::open_note_editor_insert`.
     OpenEditorInsert,
+    /// Mirrors `p`: `App::open_note_editor_preview`.
+    OpenPreview,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -326,6 +328,11 @@ pub const ENTRIES: &[PaletteEntry] = &[
         label: "open note in editor (insert mode)",
         keys: "i",
         dispatch: PaletteDispatch::NotesAction(NotesEntryAction::OpenEditorInsert),
+    },
+    PaletteEntry {
+        label: "open note rendered (markdown preview)",
+        keys: "p",
+        dispatch: PaletteDispatch::NotesAction(NotesEntryAction::OpenPreview),
     },
 ];
 
@@ -753,6 +760,7 @@ mod tests {
             NotesEntryAction::Unlink,
             NotesEntryAction::OpenEditorNormal,
             NotesEntryAction::OpenEditorInsert,
+            NotesEntryAction::OpenPreview,
         ];
         for a in required {
             assert!(

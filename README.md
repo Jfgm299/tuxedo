@@ -63,6 +63,7 @@ can carry one or more markdown notes, edited without leaving the app.
 | | `u` | Unlink (moves it out, doesn't delete the file) |
 | | `e` / `i` | Open the selected note in the editor (Normal / Insert) |
 | | `p` | Open the selected note rendered (preview) |
+| | `?` | Help, opened on its notes page (`Tab` flips to the task keys) |
 | | `z` | Pin the selected note straight to the side panel |
 | | Esc | Close the popup |
 | Editor, Normal | `h j k l` / arrows, `w b e` (`W B E`), `0 ^ $`, `gg G`, `{ }` | Move; counts work (`3j`, `2w`) |
