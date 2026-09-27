@@ -17,6 +17,7 @@ pub mod hyperlinks;
 pub mod list;
 pub mod logo;
 pub mod markdown;
+pub mod mode_colors;
 pub mod note_editor;
 pub mod notes_popup;
 pub mod settings;

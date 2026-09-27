@@ -49,26 +49,10 @@ pub fn mode_label(mode: NoteEditorMode) -> &'static str {
 
 /// The color that marks an editor sub-mode, lualine-style: used for both
 /// the focused editor's border and the status-bar chip, so the mode is
-/// readable from either place. Normal keeps the theme's accent; Insert takes
-/// the theme's green (`pri_c`), Visual its purple (`pri_other`), each falling back to its yellow (`pri_b`) on a
-/// theme whose accent already is that green (Matrix), so the two modes never
-/// look identical.
+/// readable from either place. Picked from the active theme's own palette,
+/// as far apart as it allows — see `ui::mode_colors`.
 pub fn mode_color(theme: &Theme, mode: NoteEditorMode) -> Color {
-    let distinct = |preferred: Color, fallback: Color| {
-        if preferred == theme.accent {
-            fallback
-        } else {
-            preferred
-        }
-    };
-    match mode {
-        NoteEditorMode::Normal => theme.accent,
-        NoteEditorMode::Insert => distinct(theme.pri_c, theme.pri_b),
-        NoteEditorMode::Visual | NoteEditorMode::VisualLine => {
-            distinct(theme.pri_other, theme.context)
-        }
-        NoteEditorMode::Preview => distinct(theme.project, theme.pri_d),
-    }
+    crate::ui::mode_colors::mode_palette(theme).get(mode)
 }
 
 /// Render the floating popup's embedded editor
