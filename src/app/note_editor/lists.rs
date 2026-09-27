@@ -99,6 +99,15 @@ pub fn wrap_indent(line: &str) -> usize {
     }
 }
 
+/// What a new line opened below `line` starts with (`o`): the next list
+/// marker on a list item, the same indentation on any other line.
+pub(super) fn continuation_of(line: &str) -> String {
+    match parse_marker(line) {
+        Some(marker) => marker.continuation(),
+        None => line.chars().take_while(|c| c.is_whitespace()).collect(),
+    }
+}
+
 impl NoteEditorState {
     /// Enter in Insert mode. On a list item, the new line starts with the
     /// next item's marker. On an item that is still empty (just its marker),

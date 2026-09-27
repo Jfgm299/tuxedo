@@ -641,8 +641,11 @@ impl NoteEditorState {
             }
             Char('o') => {
                 self.begin_edit();
-                self.cursor_col = len;
-                self.grouped(Self::newline);
+                let prefix = super::lists::continuation_of(&self.lines[line]);
+                self.cursor_col = prefix.chars().count();
+                self.cursor_line = line + 1;
+                self.lines.insert(line + 1, prefix);
+                self.dirty = true;
                 self.start_insert(true);
             }
             Char('O') => {
@@ -961,6 +964,12 @@ mod tests {
         let mut e = editor(&["- [x] done"]);
         keys(&mut e, "onew<esc>");
         assert_eq!(e.lines(), &["- [x] done", "- [ ] new"]);
+
+        // On an empty item, `o` still opens a new item below it rather
+        // than ending the list the way Enter would.
+        let mut e = editor(&["1. ", "tail"]);
+        keys(&mut e, "ox<esc>");
+        assert_eq!(e.lines(), &["1. ", "2. x", "tail"]);
     }
 
     #[test]
