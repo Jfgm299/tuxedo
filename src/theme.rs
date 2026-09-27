@@ -297,6 +297,11 @@ pub fn load_user_themes(dir: &Path) -> (Vec<Theme>, Vec<String>) {
 /// leaked into a `&'static str` so the resulting `Theme` matches built-ins
 /// structurally. All 26 color fields are required; missing or unparseable
 /// fields produce a one-line error that names the offending field.
+#[cfg(test)]
+pub(crate) fn parse_theme_for_tests(s: &str) -> Theme {
+    parse_theme(s).expect("theme parses")
+}
+
 fn parse_theme(s: &str) -> Result<Theme, String> {
     let mut name: Option<String> = None;
     let mut colors: std::collections::BTreeMap<&'static str, Color> =

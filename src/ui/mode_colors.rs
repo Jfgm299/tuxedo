@@ -5,9 +5,10 @@
 //! Normal keeps the theme's accent. Insert, Visual and Preview are each
 //! chosen from the theme's other hued colors (priorities, project, context,
 //! due…) by maximizing the perceptual distance (OKLab) to the colors
-//! already taken, nudged toward the hue vim statuslines use for that mode —
-//! green for Insert, purple for Visual, orange for Preview — and skipping
-//! grays and colors that barely stand out from the panel background.
+//! Among the combinations whose colors are clearly apart, the one closest
+//! to the hues vim statuslines use — green for Insert, purple for Visual,
+//! orange for Preview — wins; grays and colors that barely stand out from
+//! the panel background are never used.
 
 use ratatui::style::Color;
 
@@ -39,10 +40,9 @@ const INSERT_HUE: f32 = 142.0; // green
 const VISUAL_HUE: f32 = 310.0; // purple / magenta
 const PREVIEW_HUE: f32 = 60.0; // orange / amber
 
-/// How much landing on each mode's preferred hue weighs against raw
-/// distinctness. Small, so a clearly more distinct trio wins over one with
-/// the "right" hues.
-const HUE_WEIGHT: f32 = 0.06;
+/// OKLab distance at which two mode colors are clearly told apart at a
+/// glance; past it, matching the usual hues matters more than more spread.
+const GOOD_SPREAD: f32 = 0.08;
 
 pub fn mode_palette(theme: &Theme) -> ModePalette {
     let accent = oklab(theme.accent);
@@ -75,11 +75,11 @@ pub fn mode_palette(theme: &Theme) -> ModePalette {
         }
     }
 
-    // Every ordered trio (Insert, Visual, Preview): keep the one whose four
-    // colors, with the accent, are furthest apart — its closest pair as far
-    // apart as possible — lightly steered toward each mode's usual hue.
+    // Score every ordered trio (Insert, Visual, Preview) by its spread —
+    // the distance between the closest two of its four colors, accent
+    // included — and by how far each color sits from its mode's usual hue.
     let n = candidates.len();
-    let mut best: Option<([usize; 3], f32)> = None;
+    let mut trios: Vec<([usize; 3], f32, f32)> = Vec::new();
     for i in 0..n {
         for v in 0..n {
             for p in 0..n {
@@ -97,13 +97,21 @@ pub fn mode_palette(theme: &Theme) -> ModePalette {
                     + hue_gap(labs[2].hue(), VISUAL_HUE)
                     + hue_gap(labs[3].hue(), PREVIEW_HUE))
                     / (3.0 * 180.0);
-                let score = spread - HUE_WEIGHT * off_hue;
-                if best.is_none_or(|(_, s)| score > s) {
-                    best = Some(([i, v, p], score));
-                }
+                trios.push(([i, v, p], spread, off_hue));
             }
         }
     }
+    // Among the trios that are distinct enough (clearly apart, or close to
+    // the best this palette can do), the one nearest the usual hues wins;
+    // a rich palette thus gets the familiar green / purple / orange, a
+    // sparse one gets whatever keeps the modes apart.
+    let best_spread = trios.iter().map(|t| t.1).fold(0.0, f32::max);
+    let good_enough = GOOD_SPREAD.min(best_spread * 0.8);
+    let best = trios
+        .iter()
+        .filter(|t| t.1 >= good_enough)
+        .min_by(|a, b| a.2.total_cmp(&b.2).then(b.1.total_cmp(&a.1)))
+        .map(|t| (t.0, t.1));
     // A theme with fewer than three usable colors falls back to the accent;
     // the chip label still names the mode.
     let color = |k: usize| best.map_or(theme.accent, |(idx, _)| candidates[idx[k]].0);
@@ -264,6 +272,21 @@ mod tests {
         let p = mode_palette(&theme::MATRIX);
         assert_ne!(p.insert, theme::MATRIX.accent);
         assert_ne!(p.insert, theme::MATRIX.pri_c, "same green as the accent");
+    }
+
+    /// Catppuccin Macchiato (the shipped `docs/themes` file) gets the same
+    /// mode colors as Catppuccin's own nvim statusline: blue, green, mauve,
+    /// peach.
+    #[test]
+    fn catppuccin_macchiato_gets_catppuccins_own_mode_colors() {
+        let t = crate::theme::parse_theme_for_tests(include_str!(
+            "../../docs/themes/catppuccin-macchiato.toml"
+        ));
+        let p = mode_palette(&t);
+        assert_eq!(p.normal, Color::Rgb(0x8a, 0xad, 0xf4), "blue");
+        assert_eq!(p.insert, Color::Rgb(0xa6, 0xda, 0x95), "green");
+        assert_eq!(p.visual, Color::Rgb(0xc6, 0xa0, 0xf6), "mauve");
+        assert_eq!(p.preview, Color::Rgb(0xf5, 0xa9, 0x7f), "peach");
     }
 
     #[test]
