@@ -675,8 +675,7 @@ mod tests {
         let folder = app.notes_popup.folder.clone().expect("folder resolved");
         assert!(folder.existed_in_task);
         let content = std::fs::read_to_string(folder.dir.join("foo.md")).expect("note written");
-        assert!(content.starts_with("# Write PR summary\n"));
-        assert!(content.contains("## My notes\n\n"));
+        assert_eq!(content, "# Write PR summary\n\n");
 
         let raw = &app.tasks()[0].raw;
         assert!(

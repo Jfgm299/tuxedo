@@ -202,68 +202,14 @@ fn fallback_notes_id() -> String {
     format!("{nanos:x}{counter:x}")
 }
 
+/// Starting content for a freshly created note: just the task's body as a
+/// `# ` title. Deliberately no copy of the task's priority/due/projects:
+/// the todo.txt line is the source of truth for those, and a snapshot
+/// written here would go stale the moment the task changes.
 pub fn note_template(task: &Task) -> String {
     let title = todo::body_only(&task.raw);
     let title = if title.is_empty() { "Task" } else { &title };
-    let mut out = String::new();
-    out.push_str("# ");
-    out.push_str(title);
-    out.push_str("\n\n");
-    out.push_str("## Metadata\n\n");
-    if let Some(priority) = task.priority {
-        out.push_str(&format!("- Priority: {priority}\n"));
-    }
-    if let Some(created) = &task.created_date {
-        out.push_str(&format!("- Created: {created}\n"));
-    }
-    if let Some(due) = &task.due {
-        out.push_str(&format!("- Due: {due}\n"));
-    }
-    if !task.projects.is_empty() {
-        out.push_str("- Projects: ");
-        out.push_str(
-            &task
-                .projects
-                .iter()
-                .map(|p| format!("+{p}"))
-                .collect::<Vec<_>>()
-                .join(" "),
-        );
-        out.push('\n');
-    }
-    if !task.contexts.is_empty() {
-        out.push_str("- Contexts: ");
-        out.push_str(
-            &task
-                .contexts
-                .iter()
-                .map(|c| format!("@{c}"))
-                .collect::<Vec<_>>()
-                .join(" "),
-        );
-        out.push('\n');
-    }
-    for key in ["clickup", "clickup_status"] {
-        if let Some(value) = kv_from_raw(&task.raw, key) {
-            let label = match key {
-                "clickup" => "ClickUp",
-                "clickup_status" => "ClickUp status",
-                _ => key,
-            };
-            out.push_str(&format!("- {label}: {value}\n"));
-        }
-    }
-    if let Some(url) = task
-        .raw
-        .split_whitespace()
-        .find(|token| token.starts_with("http://") || token.starts_with("https://"))
-    {
-        out.push_str(&format!("- URL: {url}\n"));
-    }
-    out.push_str("\n## Task\n\n```todo.txt\n");
-    out.push_str(&task.raw);
-    out.push_str("\n```\n\n## My notes\n\n");
-    out
+    format!("# {title}\n\n")
 }
 
 fn expand_note_dir(value: &str) -> PathBuf {
@@ -278,14 +224,6 @@ fn expand_note_dir(value: &str) -> PathBuf {
         return PathBuf::from(home).join(rest);
     }
     PathBuf::from(value)
-}
-
-fn kv_from_raw(raw: &str, key: &str) -> Option<String> {
-    let prefix = format!("{key}:");
-    raw.split_whitespace()
-        .find_map(|token| token.strip_prefix(&prefix))
-        .map(str::to_string)
-        .filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]
@@ -310,20 +248,12 @@ mod tests {
     }
 
     #[test]
-    fn template_contains_title_metadata_and_preserved_notes_section() {
+    fn template_is_just_the_task_title() {
         let task = parse_line(
             "(B) Flow +EstudoViabilidade @charlie @clickup due:2026-06-23 clickup:86ahz8gcg",
         )
         .unwrap();
-        let rendered = note_template(&task);
-
-        assert!(rendered.starts_with("# Flow\n"));
-        assert!(rendered.contains("- Priority: B\n"));
-        assert!(rendered.contains("- Due: 2026-06-23\n"));
-        assert!(rendered.contains("- Projects: +EstudoViabilidade\n"));
-        assert!(rendered.contains("- Contexts: @charlie @clickup\n"));
-        assert!(rendered.contains("- ClickUp: 86ahz8gcg\n"));
-        assert!(rendered.contains("## My notes\n\n"));
+        assert_eq!(note_template(&task), "# Flow\n\n");
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {
