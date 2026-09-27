@@ -23,15 +23,16 @@ This is a personal fork of [webstonehq/tuxedo](https://github.com/webstonehq/tux
 (MIT licensed — see [`LICENSE`](LICENSE)). All credit for the base
 application — the todo.txt engine, the TUI, the themes, everything described
 below in the rest of this README — goes to that upstream project and its
-contributors. This fork adds one feature on top: a **notes popup**, so a task
-can carry one or more markdown notes, edited without leaving the app.
+contributors. This fork adds, on top: a **notes popup**, so a task can carry
+one or more markdown notes, edited (vim-style) and previewed without leaving
+the app, and **starred tasks** that stay at the top of their priority.
 
 ### What's different from upstream
 
 - **Multiple notes per task**, stored one per file under `notes_dir/tasks/<id>/`
   (`notes:<id>/` token), replacing upstream's single-file `note:<path>` model.
 - **A popup to browse/manage them** (`o` on a task) instead of shelling out
-  to `$EDITOR`.
+  to `$EDITOR`. A new note starts with just the task's title as a heading.
 - **An embedded markdown editor** built into the TUI itself — no external
   editor process, and it respects tuxedo's active theme. It speaks the
   everyday subset of vim (motions, operators, counts, Visual mode, undo,
@@ -39,6 +40,9 @@ can carry one or more markdown notes, edited without leaving the app.
   and soft-wraps long lines to the window width without touching the file.
   `M` (or `p` from the notes list) shows the note rendered — headings,
   checkboxes, quotes, code blocks, tables — always current with the buffer.
+  The preview follows the note-taking convention rather than strict
+  CommonMark: every line break is kept, and a line starting with a bare
+  `[ ]` / `[x]` shows as a checkbox just like `- [ ]`.
   `E` hands the note to your real `$EDITOR` when you need more.
 - **Pin a note to a right-docked panel** and keep using the rest of the app
   alongside it, with several notes pinned as switchable tabs.
@@ -46,7 +50,10 @@ can carry one or more markdown notes, edited without leaving the app.
   styled after [noice.nvim](https://github.com/folke/noice.nvim)'s cmdline
   popup, so `:w`/`:wq` muscle memory works without needing real vim.
 - The command palette (`Ctrl+P`, now also reachable from inside the notes
-  popup) lists every notes action too.
+  popup) lists every notes action too, and the `?` help overlay has a second
+  page (`Tab`) with every notes and editor key.
+- **Unsaved edits are protected**: Esc, `:q` and `Z` refuse to close a note
+  with unsaved changes (`:w` to save, `:q!` to discard).
 - **Starred tasks**: `*` stars a task (a `star:1` tag), which floats it to
   the top of its own priority group — a starred (B) task sits above the other
   (B) tasks, never above an (A).
@@ -98,8 +105,10 @@ goes in verbatim, lists and all.
 ### Install
 
 ```sh
-./install.sh
+./install.sh          # then run: tuxedo-w-notes
 ```
+
+To update later: `git pull && ./install.sh`.
 
 Installs as `tuxedo-w-notes` (override with `$INSTALL_NAME`), not `tuxedo` —
 deliberately a different command name, independent of a Homebrew-installed
