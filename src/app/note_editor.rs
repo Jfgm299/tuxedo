@@ -402,6 +402,22 @@ impl App {
         self.open_note_editor(NoteEditorMode::Insert);
     }
 
+    /// The note editor that currently receives keystrokes, if any: the
+    /// active pinned tab while `pinned_focus` is set, otherwise the floating
+    /// popup's editor while `Mode::Notes` has one open. Drives the status
+    /// bar's mode chip, which can't read the editor's sub-mode off
+    /// `app.mode` alone (it stays `Mode::Normal` while a pinned note has
+    /// focus — see `src/app/pinned_note.rs`).
+    pub fn focused_note_editor(&self) -> Option<&NoteEditorState> {
+        if self.pinned_focus {
+            self.active_pinned_note()
+        } else if self.mode == super::types::Mode::Notes {
+            self.notes_popup.active_editor.as_ref()
+        } else {
+            None
+        }
+    }
+
     fn open_note_editor(&mut self, mode: NoteEditorMode) {
         let Some(path) = self.notes_popup.selected().cloned() else {
             return;

@@ -26,12 +26,40 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
-use crate::app::{App, NoteEditorState};
+use crate::app::{App, NoteEditorMode, NoteEditorState};
 use crate::theme::Theme;
+
+/// The status-bar chip text for an editor sub-mode.
+pub fn mode_label(mode: NoteEditorMode) -> &'static str {
+    match mode {
+        NoteEditorMode::Normal => "NORMAL",
+        NoteEditorMode::Insert => "INSERT",
+    }
+}
+
+/// The color that marks an editor sub-mode, lualine-style: used for both
+/// the focused editor's border and the status-bar chip, so the mode is
+/// readable from either place. Normal keeps the theme's accent; Insert takes
+/// the theme's green (`pri_c`), falling back to its yellow (`pri_b`) on a
+/// theme whose accent already is that green (Matrix), so the two modes never
+/// look identical.
+pub fn mode_color(theme: &Theme, mode: NoteEditorMode) -> Color {
+    let distinct = |preferred: Color, fallback: Color| {
+        if preferred == theme.accent {
+            fallback
+        } else {
+            preferred
+        }
+    };
+    match mode {
+        NoteEditorMode::Normal => theme.accent,
+        NoteEditorMode::Insert => distinct(theme.pri_c, theme.pri_b),
+    }
+}
 
 /// Render the floating popup's embedded editor
 /// (`NotesPopupState::active_editor`). Thin wrapper over [`render_editor`]:
@@ -135,7 +163,11 @@ pub fn render_editor(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| editor.path().display().to_string());
 
-    let border_color = if focused { theme.accent } else { theme.border };
+    let border_color = if focused {
+        mode_color(theme, editor.mode())
+    } else {
+        theme.border
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color).bg(theme.panel))

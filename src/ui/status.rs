@@ -6,6 +6,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::{App, DialogInputMode, Mode, NoteEditorMode, View};
 use crate::ui::dialog::draft_cursor_spans;
+use crate::ui::note_editor;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme();
@@ -38,6 +39,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             None => "NOTES".into(),
         },
     };
+    // The focused note editor's own sub-mode wins over `app.mode`: a pinned
+    // note keeps `app.mode == Mode::Normal` while it has focus, which used
+    // to leave the chip stuck on NORMAL even while typing in Insert.
+    let editor_mode = app.focused_note_editor().map(|e| e.mode());
+    if let Some(mode) = editor_mode {
+        mode_label = note_editor::mode_label(mode).into();
+    }
     if matches!(app.view, View::Archive) {
         mode_label = "ARCHIVE".into();
     }
@@ -153,7 +161,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let chip = Paragraph::new(Span::styled(
         chip_text,
         Style::default()
-            .bg(theme.mode_bg)
+            .bg(editor_mode.map_or(theme.mode_bg, |m| note_editor::mode_color(theme, m)))
             .fg(theme.mode_fg)
             .add_modifier(Modifier::BOLD),
     ))
@@ -265,6 +273,47 @@ mod tests {
             text.contains("o notes"),
             "Normal-mode hint bar should advertise the notes action ('o notes'): {text}"
         );
+    }
+
+    fn chip_cell(app: &App) -> (String, ratatui::style::Color) {
+        let backend = TestBackend::new(200, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| super::render(f, f.area(), app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let mut text = String::new();
+        for x in 0..12 {
+            text.push_str(buf[(x, 0)].symbol());
+        }
+        (text, buf[(1, 0)].bg)
+    }
+
+    /// A pinned note with focus leaves `app.mode` at `Mode::Normal`; the chip
+    /// must still follow the pinned editor's own sub-mode, in its own color.
+    #[test]
+    fn mode_chip_follows_the_focused_pinned_note_sub_mode() {
+        use crate::app::{NoteEditorMode, NoteEditorState};
+
+        let mut app = build_app();
+        let path = std::env::temp_dir().join(format!(
+            "tuxedo-status-pinned-mode-{}.md",
+            std::process::id()
+        ));
+        std::fs::write(&path, "hello").unwrap();
+        app.pinned_notes
+            .push(NoteEditorState::load(path.clone(), NoteEditorMode::Normal));
+        app.pinned_focus = true;
+        let (normal_text, normal_bg) = chip_cell(&app);
+        assert!(normal_text.contains("NORMAL"), "{normal_text}");
+
+        app.pinned_notes[0].enter_insert();
+        let (insert_text, insert_bg) = chip_cell(&app);
+        assert!(insert_text.contains("INSERT"), "{insert_text}");
+        assert_ne!(normal_bg, insert_bg, "Insert gets its own chip color");
+
+        app.pinned_focus = false;
+        let (unfocused, _) = chip_cell(&app);
+        assert!(unfocused.contains("NORMAL"), "main list is back in Normal");
+        let _ = std::fs::remove_file(&path);
     }
 
     /// T13: the embedded editor's Normal-sub-mode hint should advertise the
