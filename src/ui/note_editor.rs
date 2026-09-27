@@ -30,7 +30,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
-use crate::app::{App, NoteEditorMode, NoteEditorState};
+use unicode_width::UnicodeWidthChar;
+
+use crate::app::{App, NoteEditorMode, NoteEditorState, VisualSelection, wrap_indent};
 use crate::theme::Theme;
 
 /// The status-bar chip text for an editor sub-mode.
@@ -38,13 +40,15 @@ pub fn mode_label(mode: NoteEditorMode) -> &'static str {
     match mode {
         NoteEditorMode::Normal => "NORMAL",
         NoteEditorMode::Insert => "INSERT",
+        NoteEditorMode::Visual => "VISUAL",
+        NoteEditorMode::VisualLine => "V-LINE",
     }
 }
 
 /// The color that marks an editor sub-mode, lualine-style: used for both
 /// the focused editor's border and the status-bar chip, so the mode is
 /// readable from either place. Normal keeps the theme's accent; Insert takes
-/// the theme's green (`pri_c`), falling back to its yellow (`pri_b`) on a
+/// the theme's green (`pri_c`), Visual its purple (`pri_other`), each falling back to its yellow (`pri_b`) on a
 /// theme whose accent already is that green (Matrix), so the two modes never
 /// look identical.
 pub fn mode_color(theme: &Theme, mode: NoteEditorMode) -> Color {
@@ -58,6 +62,9 @@ pub fn mode_color(theme: &Theme, mode: NoteEditorMode) -> Color {
     match mode {
         NoteEditorMode::Normal => theme.accent,
         NoteEditorMode::Insert => distinct(theme.pri_c, theme.pri_b),
+        NoteEditorMode::Visual | NoteEditorMode::VisualLine => {
+            distinct(theme.pri_other, theme.context)
+        }
     }
 }
 
@@ -181,30 +188,14 @@ pub fn render_editor(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let height = inner.height as usize;
-    let cursor_line = editor.cursor_line();
-    let cursor_col = editor.cursor_col();
-    let lines = editor.lines();
-
-    // Viewport-follows-cursor scrolling, recomputed fresh every frame from
-    // just the cursor position and the visible height: no persisted scroll
-    // offset to keep in sync. Scrolls down only as far as needed to keep the
-    // cursor's line on screen; scrolling back up happens for free once the
-    // cursor line is inside `0..height` again.
-    let top = if height > 0 && cursor_line >= height {
-        cursor_line + 1 - height
-    } else {
-        0
-    };
-    let end = (top + height).min(lines.len());
-
-    let rendered: Vec<Line> = lines[top..end]
+    let rows = visual_rows(editor, inner.width as usize);
+    let top = scroll_to_cursor(editor, &rows, inner.height as usize);
+    let selection = editor.visual_selection();
+    let rendered: Vec<Line> = rows
         .iter()
-        .enumerate()
-        .map(|(i, text)| {
-            let abs_line = top + i;
-            render_line(theme, text, abs_line == cursor_line, cursor_col)
-        })
+        .skip(top)
+        .take(inner.height as usize)
+        .map(|row| render_row(theme, editor, row, selection))
         .collect();
 
     frame.render_widget(
@@ -269,38 +260,173 @@ fn render_command_prompt(frame: &mut Frame, area: Rect, theme: &Theme, input: &s
     );
 }
 
-/// Render one buffer line, highlighting the cursor's character cell (or a
-/// single blank cell past the end of the line) when `is_cursor_line`.
-fn render_line(
+/// One on-screen row of the editor: the chars `start..end` of buffer line
+/// `line`, drawn after `indent` blank cells (the hanging indent of a
+/// soft-wrapped continuation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Row {
+    line: usize,
+    start: usize,
+    end: usize,
+    indent: usize,
+    /// The line's final row — where a cursor past the line's end is drawn.
+    last: bool,
+}
+
+/// Soft-wrap `text` (buffer line `line`) into rows at most `width` cells
+/// wide. Rows break after whitespace where possible, like vim's
+/// `linebreak`, and only mid-word for words wider than a whole row.
+/// Continuation rows hang under the text of a list item (see
+/// [`wrap_indent`]) when that leaves at least half the width. With
+/// `cursor_at_end`, room is kept for the cursor cell past the last char,
+/// adding a row if the last one is full. Display only: the buffer's lines
+/// are never changed.
+fn wrap_line(text: &str, line: usize, width: usize, cursor_at_end: bool) -> Vec<Row> {
+    let width = width.max(1);
+    let chars: Vec<char> = text.chars().collect();
+    let hang = Some(wrap_indent(text))
+        .filter(|&h| h > 0 && h <= width / 2)
+        .unwrap_or(0);
+    let cell = |c: char| UnicodeWidthChar::width(c).unwrap_or(0);
+    let mut rows = Vec::new();
+    let mut start = 0;
+    let mut used = 0;
+    // Index right after the last whitespace in the current row: the
+    // preferred place to break it.
+    let mut break_at = None;
+    let mut i = 0;
+    while i < chars.len() {
+        let avail = if rows.is_empty() { width } else { width - hang };
+        let w = cell(chars[i]);
+        if used + w > avail && i > start {
+            // Break after the last whitespace, unless what that would carry
+            // over is too wide for a continuation row itself.
+            let fits =
+                |b: usize| chars[b..i].iter().map(|&c| cell(c)).sum::<usize>() <= width - hang;
+            let end = break_at.filter(|&b| b > start && fits(b)).unwrap_or(i);
+            rows.push((start, end));
+            start = end;
+            used = chars[start..i].iter().map(|&c| cell(c)).sum();
+            break_at = None;
+            continue;
+        }
+        used += w;
+        i += 1;
+        if chars[i - 1].is_whitespace() {
+            break_at = Some(i);
+        }
+    }
+    let avail = if rows.is_empty() { width } else { width - hang };
+    rows.push((start, chars.len()));
+    if cursor_at_end && used + 1 > avail && !chars.is_empty() {
+        rows.push((chars.len(), chars.len()));
+    }
+    let count = rows.len();
+    rows.into_iter()
+        .enumerate()
+        .map(|(n, (start, end))| Row {
+            line,
+            start,
+            end,
+            indent: if n == 0 { 0 } else { hang },
+            last: n + 1 == count,
+        })
+        .collect()
+}
+
+/// Every visual row of the buffer, in order.
+fn visual_rows(editor: &NoteEditorState, width: usize) -> Vec<Row> {
+    let cursor_line = editor.cursor_line();
+    let cursor_at_end = editor.cursor_col() >= editor.lines()[cursor_line].chars().count();
+    editor
+        .lines()
+        .iter()
+        .enumerate()
+        .flat_map(|(i, text)| wrap_line(text, i, width, i == cursor_line && cursor_at_end))
+        .collect()
+}
+
+/// Rows kept visible above/below the cursor while scrolling, when the
+/// viewport is tall enough (vim's `scrolloff`).
+const SCROLL_OFF: usize = 2;
+
+/// Scroll the editor's persisted viewport (`scroll_top`, in visual rows)
+/// just enough to show the cursor's row with [`SCROLL_OFF`] rows of
+/// context, and return the new top row.
+fn scroll_to_cursor(editor: &NoteEditorState, rows: &[Row], height: usize) -> usize {
+    if height == 0 {
+        return 0;
+    }
+    let (line, col) = (editor.cursor_line(), editor.cursor_col());
+    let cursor_row = rows
+        .iter()
+        .position(|r| r.line == line && (col < r.end || r.last) && col >= r.start)
+        .unwrap_or(0);
+    let off = SCROLL_OFF.min((height - 1) / 2);
+    let max_top = rows.len().saturating_sub(height);
+    let mut top = editor.scroll_top().get().min(max_top);
+    if cursor_row < top + off {
+        top = cursor_row.saturating_sub(off);
+    } else if cursor_row + off >= top + height {
+        top = (cursor_row + off + 1).saturating_sub(height).min(max_top);
+    }
+    editor.scroll_top().set(top);
+    top
+}
+
+/// Draw one visual row: the Visual selection highlighted, the cursor as a
+/// reversed cell (or a blank cell past the line's end).
+fn render_row(
     theme: &Theme,
-    text: &str,
-    is_cursor_line: bool,
-    cursor_col: usize,
+    editor: &NoteEditorState,
+    row: &Row,
+    selection: Option<VisualSelection>,
 ) -> Line<'static> {
     let base = Style::default().fg(theme.fg).bg(theme.panel);
-    if !is_cursor_line {
-        return Line::from(Span::styled(text.to_string(), base));
-    }
+    let selected = Style::default().fg(theme.fg).bg(theme.selection);
+    let cursor = Style::default().fg(theme.panel).bg(theme.cursor);
+    let is_cursor_line = row.line == editor.cursor_line();
+    let cursor_col = editor.cursor_col();
+    let text = &editor.lines()[row.line];
 
-    let chars: Vec<char> = text.chars().collect();
     let mut spans = Vec::new();
-    if cursor_col > 0 {
-        let before: String = chars[..cursor_col.min(chars.len())].iter().collect();
-        spans.push(Span::styled(before, base));
+    if row.indent > 0 {
+        spans.push(Span::styled(" ".repeat(row.indent), base));
     }
-    if cursor_col < chars.len() {
-        spans.push(Span::styled(
-            chars[cursor_col].to_string(),
-            Style::default().fg(theme.panel).bg(theme.cursor),
-        ));
-        if cursor_col + 1 < chars.len() {
-            let after: String = chars[cursor_col + 1..].iter().collect();
-            spans.push(Span::styled(after, base));
+    // Consecutive chars sharing a style go into one span.
+    let mut run = String::new();
+    let mut run_style = base;
+    for (col, c) in text
+        .chars()
+        .enumerate()
+        .skip(row.start)
+        .take(row.end - row.start)
+    {
+        let style = if is_cursor_line && col == cursor_col {
+            cursor
+        } else if selection.is_some_and(|s| s.contains(row.line, col)) {
+            selected
+        } else {
+            base
+        };
+        if style != run_style && !run.is_empty() {
+            spans.push(Span::styled(std::mem::take(&mut run), run_style));
         }
-    } else {
-        // Cursor sits past the last character (end of line) — render one
-        // highlighted blank cell so the cursor is still visible.
-        spans.push(Span::styled(" ", Style::default().bg(theme.cursor)));
+        run_style = style;
+        run.push(c);
+    }
+    if !run.is_empty() {
+        spans.push(Span::styled(run, run_style));
+    }
+    if is_cursor_line && row.last && cursor_col >= text.chars().count() {
+        // Cursor past the last char (end of line, or an empty line).
+        spans.push(Span::styled(" ", cursor));
+    } else if row.last
+        && selection.is_some_and(|s| s.linewise && s.contains(row.line, 0))
+        && text.is_empty()
+    {
+        // An empty line inside a linewise selection still shows as selected.
+        spans.push(Span::styled(" ", selected));
     }
     Line::from(spans)
 }
@@ -336,6 +462,113 @@ mod tests {
     }
 
     // ---- T13: `:`-command prompt rendering ---------------------------------
+
+    fn spans(rows: &[Row]) -> Vec<(usize, usize, usize)> {
+        rows.iter().map(|r| (r.start, r.end, r.indent)).collect()
+    }
+
+    #[test]
+    fn wrap_breaks_after_whitespace_not_mid_word() {
+        let rows = wrap_line("the quick brown fox", 0, 10, false);
+        // "the quick " | "brown fox"
+        assert_eq!(spans(&rows), vec![(0, 10, 0), (10, 19, 0)]);
+        assert!(rows[1].last && !rows[0].last);
+    }
+
+    #[test]
+    fn wrap_hard_breaks_words_wider_than_a_row() {
+        let rows = wrap_line("abcdefghij", 0, 4, false);
+        assert_eq!(spans(&rows), vec![(0, 4, 0), (4, 8, 0), (8, 10, 0)]);
+    }
+
+    #[test]
+    fn wrap_hangs_list_item_continuations_under_the_text() {
+        let rows = wrap_line("- [ ] buy milk and eggs", 0, 14, false);
+        // "- [ ] buy " | "milk and " (hang 6) | "eggs"
+        assert_eq!(rows[0].indent, 0);
+        assert!(rows[1..].iter().all(|r| r.indent == 6), "{rows:?}");
+        assert_eq!(rows.last().map(|r| r.end), Some(23));
+    }
+
+    #[test]
+    fn wrap_short_and_empty_lines_are_one_row() {
+        assert_eq!(spans(&wrap_line("", 0, 10, false)), vec![(0, 0, 0)]);
+        assert_eq!(spans(&wrap_line("short", 0, 10, false)), vec![(0, 5, 0)]);
+    }
+
+    #[test]
+    fn wrap_adds_a_row_for_a_cursor_past_a_full_last_row() {
+        assert_eq!(spans(&wrap_line("abcd", 0, 4, false)), vec![(0, 4, 0)]);
+        assert_eq!(
+            spans(&wrap_line("abcd", 0, 4, true)),
+            vec![(0, 4, 0), (4, 4, 0)]
+        );
+    }
+
+    #[test]
+    fn wrap_counts_display_width_not_chars() {
+        // Each CJK char is two cells wide.
+        let rows = wrap_line("日本語テキスト", 0, 6, false);
+        assert_eq!(spans(&rows), vec![(0, 3, 0), (3, 6, 0), (6, 7, 0)]);
+    }
+
+    #[test]
+    fn render_editor_soft_wraps_long_lines_without_changing_the_buffer() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-ui-wrap-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("a.md");
+        std::fs::write(&path, "one two three four five six\nnext").expect("write");
+        let editor = NoteEditorState::load(path, NoteEditorMode::Normal);
+        let app = build_app("(A) task\n");
+        let text = rendered_text(16, 8, |f, area| {
+            render_editor(f, area, app.theme(), &editor, true)
+        });
+        let rows: Vec<&str> = text.lines().collect();
+        assert!(rows[1].contains("one two three"), "{text}");
+        assert!(rows[2].contains("four five six"), "{text}");
+        assert!(rows[3].contains("next"), "{text}");
+        assert_eq!(editor.lines().len(), 2, "the buffer itself is untouched");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn render_editor_scrolls_to_keep_the_cursor_visible() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-ui-scroll-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("a.md");
+        let body: Vec<String> = (0..30).map(|i| format!("line {i}")).collect();
+        std::fs::write(&path, body.join("\n")).expect("write");
+        let mut editor = NoteEditorState::load(path, NoteEditorMode::Normal);
+        let app = build_app("(A) task\n");
+        editor.normal_key(crate::app::EditorKey::Char('G'));
+        let text = rendered_text(20, 10, |f, area| {
+            render_editor(f, area, app.theme(), &editor, true)
+        });
+        assert!(text.contains("line 29"), "{text}");
+        assert!(!text.contains("line 0 "), "{text}");
+
+        // Moving up a little keeps the view; jumping to the top scrolls back.
+        editor.normal_key(crate::app::EditorKey::Char('k'));
+        let text = rendered_text(20, 10, |f, area| {
+            render_editor(f, area, app.theme(), &editor, true)
+        });
+        assert!(text.contains("line 29"), "{text}");
+        editor.normal_key(crate::app::EditorKey::Char('g'));
+        editor.normal_key(crate::app::EditorKey::Char('g'));
+        let text = rendered_text(20, 10, |f, area| {
+            render_editor(f, area, app.theme(), &editor, true)
+        });
+        assert!(text.contains("line 0"), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn render_editor_scopes_the_command_prompt_to_its_own_area_not_full_screen() {

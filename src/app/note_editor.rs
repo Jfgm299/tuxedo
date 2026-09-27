@@ -28,6 +28,14 @@ use std::path::PathBuf;
 
 use super::App;
 
+mod history;
+mod lists;
+mod motions;
+mod vim;
+
+pub use lists::wrap_indent;
+pub use vim::{EditorKey, NormalOutcome, VisualSelection};
+
 /// Normal vs Insert sub-mode for the embedded editor. Kept as its own small
 /// enum rather than reusing `DialogInputMode` (the single-line draft
 /// dialog's identically-shaped Normal/Insert enum): the note editor is a
@@ -38,7 +46,29 @@ use super::App;
 pub enum NoteEditorMode {
     Normal,
     Insert,
+    /// Charwise visual selection (`v`), anchored at `visual_anchor`.
+    Visual,
+    /// Linewise visual selection (`V`), anchored at `visual_anchor`.
+    VisualLine,
 }
+
+impl NoteEditorMode {
+    pub fn is_visual(self) -> bool {
+        matches!(self, Self::Visual | Self::VisualLine)
+    }
+}
+
+/// The unnamed register `y`/`d`/`c`/`x` write and `p`/`P` read. `linewise`
+/// text (from `yy`, `dd`, `V`…) pastes as whole lines above/below the
+/// cursor line; charwise text pastes inline at the cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Register {
+    pub text: String,
+    pub linewise: bool,
+}
+
+/// Flashed when closing an editor would discard unsaved changes.
+pub const UNSAVED_WARNING: &str = "unsaved changes — :w to save, :q! to discard";
 
 /// The embedded markdown editor's state for exactly one open file at a time.
 ///
@@ -65,6 +95,32 @@ pub struct NoteEditorState {
     /// `NotesPopupState` so the floating popup and every pinned tab share
     /// one implementation automatically (see the module doc).
     command_prompt: Option<String>,
+    /// Buffer snapshots for `u` / `Ctrl+R` (see `history.rs`).
+    undo_stack: Vec<history::Snapshot>,
+    redo_stack: Vec<history::Snapshot>,
+    /// Whether the current Insert session already pushed its undo snapshot:
+    /// a whole Insert session undoes as one step, like vim.
+    insert_checkpointed: bool,
+    /// Set while a composite command runs as a single undo step (see
+    /// `vim.rs`'s `grouped`): the primitives it calls skip their own
+    /// snapshots.
+    edit_group: bool,
+    /// Half-typed Normal-mode command (`d` waiting for a motion, `g` waiting
+    /// for its second `g`, `r` waiting for a character…) — see `vim.rs`.
+    pending: vim::Pending,
+    /// Count prefix typed so far (`3` in `3dd`), if any.
+    count: Option<usize>,
+    /// Where Visual mode started; the selection runs from here to the cursor.
+    visual_anchor: (usize, usize),
+    register: Option<Register>,
+    /// Text a yank/delete just put in the register, waiting for the binary
+    /// to copy it to the system clipboard (OSC 52) — see
+    /// [`NoteEditorState::take_clipboard_out`].
+    clipboard_out: Option<String>,
+    /// First visual (soft-wrapped) row on screen. Owned by the renderer,
+    /// which only knows the viewport size at draw time — hence a `Cell`,
+    /// updated through the `&self` the renderer gets.
+    scroll_top: std::cell::Cell<usize>,
 }
 
 /// What [`NoteEditorState::execute_command_prompt`] decided for the typed
@@ -107,7 +163,55 @@ impl NoteEditorState {
             mode,
             dirty: false,
             command_prompt: None,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            insert_checkpointed: false,
+            edit_group: false,
+            pending: vim::Pending::None,
+            count: None,
+            visual_anchor: (0, 0),
+            register: None,
+            clipboard_out: None,
+            scroll_top: std::cell::Cell::new(0),
         }
+    }
+
+    /// See the `scroll_top` field.
+    pub fn scroll_top(&self) -> &std::cell::Cell<usize> {
+        &self.scroll_top
+    }
+
+    /// Re-read the file from disk (after it was edited in `$EDITOR`),
+    /// keeping the cursor where it was as far as the new content allows.
+    /// The reload itself is an undoable step.
+    pub fn reload_from_disk(&mut self) {
+        let content = std::fs::read_to_string(&self.path).unwrap_or_default();
+        let lines = lines_from_content(&content);
+        if lines != self.lines {
+            self.push_undo();
+            self.lines = lines;
+        }
+        self.dirty = false;
+        self.cursor_line = self.cursor_line.min(self.lines.len() - 1);
+        self.clamp_col();
+    }
+
+    /// Text most recently yanked or deleted into the register, handed over
+    /// once so the binary can copy it to the system clipboard.
+    pub fn take_clipboard_out(&mut self) -> Option<String> {
+        self.clipboard_out.take()
+    }
+
+    /// True while a bare Normal-mode key would start a fresh command: Normal
+    /// sub-mode, no `:` prompt open, and no half-typed command (`d`, `g`,
+    /// `r`, a count…). Callers only intercept their own keys (`z`, `Z`,
+    /// `Tab`) in this state, so e.g. the `z` in `rz` still reaches the
+    /// editor.
+    pub fn is_idle(&self) -> bool {
+        self.mode == NoteEditorMode::Normal
+            && self.command_prompt.is_none()
+            && self.pending == vim::Pending::None
+            && self.count.is_none()
     }
 
     pub fn path(&self) -> &PathBuf {
@@ -197,6 +301,7 @@ impl NoteEditorState {
     /// Enter Insert sub-mode (`i`).
     pub fn enter_insert(&mut self) {
         self.mode = NoteEditorMode::Insert;
+        self.insert_checkpointed = false;
     }
 
     /// Esc while in Insert: back to Normal, staying inside the editor. Esc
@@ -204,7 +309,12 @@ impl NoteEditorState {
     /// `NotesPopupState::active_editor` (see `App::close_note_editor`) —
     /// this method never leaves the editor.
     pub fn esc_to_normal(&mut self) {
+        if self.mode == NoteEditorMode::Insert {
+            // vim steps the cursor back onto the last typed character.
+            self.cursor_col = self.cursor_col.saturating_sub(1);
+        }
         self.mode = NoteEditorMode::Normal;
+        self.insert_checkpointed = false;
     }
 
     // ---- T13: `:`-command prompt -------------------------------------------
@@ -256,7 +366,9 @@ impl NoteEditorState {
     ///   failure handling) — matches this task's read that a save failure
     ///   should never look like nothing happened, but also should never
     ///   silently discard unsaved work by closing anyway.
-    /// - `q` — request a close with no save attempt.
+    /// - `q` — request a close with no save attempt, refused (with
+    ///   [`UNSAVED_WARNING`]) while the buffer has unsaved changes, like vim.
+    /// - `q!` — request a close, discarding unsaved changes.
     /// - `wq`/`x` — save, then request a close **only if the save
     ///   succeeded**. On a save failure the editor stays open with the error
     ///   flashed, exactly like plain `:w`: closing anyway on a failed save
@@ -281,7 +393,8 @@ impl NoteEditorState {
                 Ok(()) => NoteCommandResult::Ok,
                 Err(e) => NoteCommandResult::Error(format!("note save failed: {e}")),
             },
-            "q" => NoteCommandResult::CloseRequested,
+            "q" if self.dirty => NoteCommandResult::Error(UNSAVED_WARNING.to_string()),
+            "q" | "q!" => NoteCommandResult::CloseRequested,
             "wq" | "x" => match self.save() {
                 Ok(()) => NoteCommandResult::CloseRequested,
                 Err(e) => NoteCommandResult::Error(format!("note save failed: {e}")),
@@ -294,6 +407,7 @@ impl NoteEditorState {
 
     /// Insert `c` at the cursor and advance past it.
     pub fn insert_char(&mut self, c: char) {
+        self.begin_edit();
         let byte = byte_offset(&self.lines[self.cursor_line], self.cursor_col);
         self.lines[self.cursor_line].insert(byte, c);
         self.cursor_col += 1;
@@ -304,6 +418,7 @@ impl NoteEditorState {
     /// cursor stays on `cursor_line`, the text after it becomes a new line
     /// right below, and the cursor moves to column 0 of that new line.
     pub fn split_line(&mut self) {
+        self.begin_edit();
         let byte = byte_offset(&self.lines[self.cursor_line], self.cursor_col);
         let rest = self.lines[self.cursor_line].split_off(byte);
         self.lines.insert(self.cursor_line + 1, rest);
@@ -318,12 +433,14 @@ impl NoteEditorState {
     pub fn delete_forward(&mut self) {
         let len = self.current_line_len();
         if self.cursor_col < len {
+            self.begin_edit();
             let line = &mut self.lines[self.cursor_line];
             let start = byte_offset(line, self.cursor_col);
             let end = byte_offset(line, self.cursor_col + 1);
             line.drain(start..end);
             self.dirty = true;
         } else if self.cursor_line + 1 < self.lines.len() {
+            self.begin_edit();
             let next = self.lines.remove(self.cursor_line + 1);
             self.lines[self.cursor_line].push_str(&next);
             self.dirty = true;
@@ -337,6 +454,7 @@ impl NoteEditorState {
     /// nothing precedes the cursor to delete or join into.
     pub fn backspace(&mut self) {
         if self.cursor_col > 0 {
+            self.begin_edit();
             let line = &mut self.lines[self.cursor_line];
             let start = byte_offset(line, self.cursor_col - 1);
             let end = byte_offset(line, self.cursor_col);
@@ -344,6 +462,7 @@ impl NoteEditorState {
             self.cursor_col -= 1;
             self.dirty = true;
         } else if self.cursor_line > 0 {
+            self.begin_edit();
             let current = self.lines.remove(self.cursor_line);
             self.cursor_line -= 1;
             let prev_len = self.current_line_len();
@@ -351,6 +470,34 @@ impl NoteEditorState {
             self.cursor_col = prev_len;
             self.dirty = true;
         }
+    }
+}
+
+impl NoteEditorState {
+    /// Insert `text` at the cursor verbatim — `\n` splits lines, but with no
+    /// list continuation or other smart-Enter behavior. Used for pasted
+    /// text (terminal bracketed paste, and `p`/`P`), where every line
+    /// already carries whatever markers it needs. The cursor ends just
+    /// after the inserted text.
+    pub fn insert_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.begin_edit();
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        let byte = byte_offset(&self.lines[self.cursor_line], self.cursor_col);
+        let tail = self.lines[self.cursor_line].split_off(byte);
+        let mut pieces = text.split('\n');
+        if let Some(first) = pieces.next() {
+            self.lines[self.cursor_line].push_str(first);
+        }
+        for piece in pieces {
+            self.cursor_line += 1;
+            self.lines.insert(self.cursor_line, piece.to_string());
+        }
+        self.cursor_col = self.current_line_len();
+        self.lines[self.cursor_line].push_str(&tail);
+        self.dirty = true;
     }
 }
 
@@ -416,6 +563,32 @@ impl App {
         } else {
             None
         }
+    }
+
+    /// Every open note editor: the floating popup's and each pinned tab.
+    fn note_editors_mut(&mut self) -> impl Iterator<Item = &mut NoteEditorState> {
+        self.notes_popup
+            .active_editor
+            .iter_mut()
+            .chain(self.pinned_notes.iter_mut())
+    }
+
+    /// After `path` was edited in `$EDITOR`, re-read it into every open
+    /// editor showing it.
+    pub fn reload_note_editors(&mut self, path: &std::path::Path) {
+        for editor in self.note_editors_mut() {
+            if editor.path() == path {
+                editor.reload_from_disk();
+            }
+        }
+    }
+
+    /// Text a note editor just yanked or deleted, for the binary to put on
+    /// the system clipboard.
+    pub fn take_note_clipboard(&mut self) -> Option<String> {
+        self.note_editors_mut()
+            .filter_map(NoteEditorState::take_clipboard_out)
+            .last()
     }
 
     fn open_note_editor(&mut self, mode: NoteEditorMode) {
@@ -951,7 +1124,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_command_prompt_q_requests_close_without_saving() {
+    fn execute_command_prompt_q_refuses_unsaved_changes_and_q_bang_discards_them() {
         let path = test_path();
         let mut editor = NoteEditorState::load(path.clone(), NoteEditorMode::Insert);
         editor.insert_char('a');
@@ -959,10 +1132,20 @@ mod tests {
         editor.open_command_prompt();
         editor.command_prompt_push('q');
 
-        let result = editor.execute_command_prompt();
+        assert_eq!(
+            editor.execute_command_prompt(),
+            NoteCommandResult::Error(UNSAVED_WARNING.to_string()),
+            "q refuses to drop unsaved changes"
+        );
 
-        assert_eq!(result, NoteCommandResult::CloseRequested);
-        assert!(!path.exists(), "q never saves");
+        editor.open_command_prompt();
+        editor.command_prompt_push('q');
+        editor.command_prompt_push('!');
+        assert_eq!(
+            editor.execute_command_prompt(),
+            NoteCommandResult::CloseRequested
+        );
+        assert!(!path.exists(), "q! never saves");
 
         let _ = std::fs::remove_file(&path);
     }

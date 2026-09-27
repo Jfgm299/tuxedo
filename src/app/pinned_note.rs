@@ -137,6 +137,20 @@ impl App {
         }
     }
 
+    /// `Z`: close the active pinned tab, unless it has unsaved changes — then
+    /// only flash a warning, so a stray `Z` can't throw edits away (`:w`
+    /// first, or `:q!` to discard on purpose).
+    pub fn close_pinned_note_if_saved(&mut self) {
+        if self
+            .active_pinned_note()
+            .is_some_and(NoteEditorState::dirty)
+        {
+            self.flash(super::note_editor::UNSAVED_WARNING);
+            return;
+        }
+        self.close_pinned_note();
+    }
+
     /// `Tab`/`BackTab` while focused on the pinned pane: cycle `active_pin`
     /// through `pinned_notes`, wrapping around at both ends. No-op (never
     /// panics) with fewer than two pinned notes — there's nothing to cycle

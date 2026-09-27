@@ -33,18 +33,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Mode::Share => "SHARE".into(),
         Mode::PickTheme => "PICK THEME".into(),
         Mode::Welcome => "WELCOME".into(),
-        Mode::Notes => match app.notes_popup.active_editor.as_ref().map(|e| e.mode()) {
-            Some(NoteEditorMode::Normal) => "NORMAL".into(),
-            Some(NoteEditorMode::Insert) => "INSERT".into(),
-            None => "NOTES".into(),
-        },
+        // A note editor's own sub-mode overrides this just below.
+        Mode::Notes => "NOTES".into(),
     };
     // The focused note editor's own sub-mode wins over `app.mode`: a pinned
     // note keeps `app.mode == Mode::Normal` while it has focus, which used
     // to leave the chip stuck on NORMAL even while typing in Insert.
     let editor_mode = app.focused_note_editor().map(|e| e.mode());
-    if let Some(mode) = editor_mode {
-        mode_label = note_editor::mode_label(mode).into();
+    if let Some(editor) = app.focused_note_editor() {
+        mode_label = match editor.pending_keys() {
+            Some(keys) => format!("{} {keys}…", note_editor::mode_label(editor.mode())).into(),
+            None => note_editor::mode_label(editor.mode()).into(),
+        };
     }
     if matches!(app.view, View::Archive) {
         mode_label = "ARCHIVE".into();
@@ -57,21 +57,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // `Mode::Normal` (that's the point — see `src/app/pinned_note.rs`), so
     // it can't drive the hint on its own; check `pinned_focus` ahead of the
     // per-mode match instead of trying to fold it into that match's arms.
-    let mut hint: std::borrow::Cow<'static, str> = if app.pinned_focus {
-        match app.active_pinned_note().map(|e| e.mode()) {
-            Some(NoteEditorMode::Normal) if app.pinned_notes.len() > 1 => {
-                "h/j/k/l or arrows move · i insert · : cmd · Ctrl+S save · Tab/S-Tab switch tab · z unfocus · Z close tab"
-                    .into()
-            }
-            Some(NoteEditorMode::Normal) => {
-                "h/j/k/l or arrows move · i insert · : cmd · Ctrl+S save · z unfocus · Z close pinned"
-                    .into()
-            }
-            Some(NoteEditorMode::Insert) => {
-                "type to edit · Enter newline · Ctrl+S save · Esc normal".into()
-            }
-            None => "z unfocus · Z close pinned".into(),
-        }
+    let mut hint: std::borrow::Cow<'static, str> = if let Some(editor) = app.focused_note_editor() {
+        let tail = if !app.pinned_focus {
+            "z pin · Esc back to list"
+        } else if app.pinned_notes.len() > 1 {
+            "Tab/S-Tab switch tab · z unfocus · Z close tab"
+        } else {
+            "z unfocus · Z close pinned"
+        };
+        note_editor_hint(editor.mode(), tail).into()
+    } else if app.pinned_focus {
+        "z unfocus · Z close pinned".into()
     } else {
         match app.mode {
             Mode::Insert => match app.draft.input_mode() {
@@ -92,17 +88,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             Mode::CommandPalette => "type to filter · Enter run · Esc cancel",
             Mode::Share => "scan the QR · any key dismisses",
             Mode::Welcome => "c create ./todo.txt · s open sample · q quit",
-            Mode::Notes => match app.notes_popup.active_editor.as_ref().map(|e| e.mode()) {
-                Some(NoteEditorMode::Normal) => {
-                    "h/j/k/l or arrows move · i insert · : cmd · Ctrl+S save · Esc back to list"
-                }
-                Some(NoteEditorMode::Insert) => {
-                    "type to edit · Enter newline · Ctrl+S save · Esc normal"
-                }
-                None => {
-                    "j/k navigate · e/i edit · z zoom · n new · r rename · d delete · u unlink · Esc close"
-                }
-            },
+            // With an editor open, the focused-editor branch above wins.
+            Mode::Notes => {
+                "j/k navigate · e/i edit · z zoom · n new · r rename · d delete · u unlink · Esc close"
+            }
             _ => {
                 "j/k · n new · r reschedule · x done · o notes · z pin · / search · ? help · u undo · q quit"
             }
@@ -203,6 +192,27 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .right_aligned(),
         right_area,
     );
+}
+
+/// The hint line for a focused note editor in `mode`, ending in the
+/// context-specific `tail` (popup vs. pinned tab keys).
+fn note_editor_hint(mode: NoteEditorMode, tail: &str) -> String {
+    let body = match mode {
+        NoteEditorMode::Normal => {
+            "hjkl w b e 0 $ gg G move · i a o insert · v V visual · d c y p · u undo · Enter tick [ ] · E $EDITOR · : cmd"
+        }
+        NoteEditorMode::Insert => {
+            "type to edit · Enter continues lists · Tab/S-Tab nest · Ctrl+S save · Esc normal"
+        }
+        NoteEditorMode::Visual | NoteEditorMode::VisualLine => {
+            "motions extend · d delete · y yank · c change · > < indent · o other end · Esc cancel"
+        }
+    };
+    if mode == NoteEditorMode::Normal {
+        format!("{body} · {tail}")
+    } else {
+        body.to_string()
+    }
 }
 
 pub fn render_command_line(frame: &mut Frame, area: Rect, app: &App) {

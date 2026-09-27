@@ -12,8 +12,9 @@ use std::io::Write;
 
 use tuxedo::action::{Action, RecAction};
 use tuxedo::app::{
-    AddOutcome, App, CalendarTarget, DialogInputMode, Mode, NoteCommandResult, NoteEditorMode,
-    NoteEditorState, NotesEntryAction, OverlayKind, PaletteDispatch, View,
+    AddOutcome, App, CalendarTarget, DialogInputMode, EditorKey, Mode, NormalOutcome,
+    NoteCommandResult, NoteEditorMode, NoteEditorState, NotesEntryAction, OverlayKind,
+    PaletteDispatch, UNSAVED_WARNING, View,
 };
 use tuxedo::cli;
 use tuxedo::config::Config;
@@ -113,12 +114,14 @@ fn main() -> Result<()> {
     }
 
     let terminal = ratatui::init();
+    enable_bracketed_paste();
     // Give the window/tab a consistent `tuxedo <path>` title across terminals
     // and operating systems, shortening long paths to fit a fixed budget.
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     let title = ui::title::terminal_title(&path, home.as_deref(), ui::title::DEFAULT_BUDGET);
     let _ = crossterm::execute!(io::stdout(), crossterm::terminal::SetTitle(title));
     let result = run(terminal, &mut app_state, &keybinds, config_rx);
+    disable_bracketed_paste();
     ratatui::restore();
     // Clear the title on exit so the shell retitles on its next prompt rather
     // than leaving `tuxedo …` behind.
@@ -232,8 +235,18 @@ fn run(
                     handle_key(app, key, keybinds);
                     if let Some(path) = app.take_pending_editor_path() {
                         open_path_in_editor(&path)?;
+                        enable_bracketed_paste();
                         terminal.clear()?;
+                        app.reload_note_editors(&path);
                     }
+                    if let Some(text) = app.take_note_clipboard() {
+                        // Best effort, like the `y` task-copy action.
+                        let _ = clipboard::copy(&text);
+                    }
+                    dirty = true;
+                }
+                Event::Paste(text) => {
+                    handle_paste(app, &text, keybinds);
                     dirty = true;
                 }
                 // A terminal resize must trigger an immediate redraw;
@@ -293,6 +306,45 @@ fn poll_config_reload(app: &mut App, rx: &Option<mpsc::Receiver<()>>) -> bool {
             app.flash(format!("config reload failed: {e}"));
             true
         }
+    }
+}
+
+/// Ask the terminal to deliver pastes as one `Event::Paste` instead of a
+/// burst of keystrokes, so a pasted multi-line list lands in a note as-is
+/// rather than each newline acting as a list-continuing Enter.
+fn enable_bracketed_paste() {
+    let _ = crossterm::execute!(io::stdout(), crossterm::event::EnableBracketedPaste);
+}
+
+fn disable_bracketed_paste() {
+    let _ = crossterm::execute!(io::stdout(), crossterm::event::DisableBracketedPaste);
+}
+
+/// A bracketed paste. Into a note editor in Insert mode it goes in verbatim;
+/// everywhere else it replays as the keystrokes it would have been without
+/// bracketed paste, so pasting into the task dialog, search, prompts… works
+/// exactly as before.
+fn handle_paste(app: &mut App, text: &str, keybinds: &KeyBindings) {
+    let insert_editor = if app.pinned_focus {
+        app.active_pinned_note_mut()
+    } else if app.mode == Mode::Notes {
+        app.notes_popup.active_editor.as_mut()
+    } else {
+        None
+    };
+    if let Some(editor) = insert_editor
+        && editor.mode() == NoteEditorMode::Insert
+    {
+        editor.insert_text(text);
+        return;
+    }
+    for c in text.chars() {
+        let code = match c {
+            '\n' | '\r' => KeyCode::Enter,
+            '\t' => KeyCode::Tab,
+            c => KeyCode::Char(c),
+        };
+        handle_key(app, KeyEvent::new(code, KeyModifiers::NONE), keybinds);
     }
 }
 
@@ -366,17 +418,19 @@ fn handle_key(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) {
         // ordinary input instead of being intercepted here — otherwise
         // typing e.g. `:wq` would toggle focus/close the tab/cycle tabs on
         // the `q`/`Tab` keystrokes instead of reaching the command buffer.
-        let command_prompt_open = app
+        // The same goes for a half-typed vim command (`rz` replaces with a
+        // `z`) and Visual mode — `is_idle` covers all of those.
+        if app
             .active_pinned_note()
-            .is_some_and(|e| e.command_prompt().is_some());
-        if editor_mode == Some(NoteEditorMode::Normal) && !command_prompt_open {
+            .is_some_and(NoteEditorState::is_idle)
+        {
             match key.code {
                 KeyCode::Char('z') => {
                     app.toggle_pin_focus();
                     return;
                 }
                 KeyCode::Char('Z') => {
-                    app.close_pinned_note();
+                    app.close_pinned_note_if_saved();
                     return;
                 }
                 KeyCode::Tab => {
@@ -487,11 +541,12 @@ fn handle_notes(app: &mut App, key: KeyEvent) {
         // T13: same restriction as the pinned-focus branch in `handle_key`
         // above — while the `:`-command prompt is open, `z` is ordinary
         // buffer text, not a request to pin.
-        let normal_no_prompt =
-            app.notes_popup.active_editor.as_ref().is_some_and(|e| {
-                e.mode() == NoteEditorMode::Normal && e.command_prompt().is_none()
-            });
-        if key.code == KeyCode::Char('z') && normal_no_prompt {
+        let idle = app
+            .notes_popup
+            .active_editor
+            .as_ref()
+            .is_some_and(NoteEditorState::is_idle);
+        if key.code == KeyCode::Char('z') && idle {
             app.toggle_pin_focus();
             return;
         }
@@ -573,6 +628,10 @@ enum NoteEditorSignal {
     /// with what `q`/`Z` mean everywhere else in this app (see this
     /// variant's use in `handle_pinned_note_key` below).
     CloseRequested,
+    /// `E`: the buffer was saved and the note should open in `$EDITOR`; the
+    /// caller queues the path for the main loop, which reloads the editor
+    /// from disk once the external editor exits.
+    OpenExternal(std::path::PathBuf),
 }
 
 /// The embedded note editor nested inside `Mode::Notes` (see
@@ -584,20 +643,31 @@ fn handle_note_editor(app: &mut App, key: KeyEvent) {
         return;
     };
     let signal = match editor.mode() {
-        NoteEditorMode::Normal => handle_note_editor_normal(editor, key),
         NoteEditorMode::Insert => handle_note_editor_insert(editor, key),
+        _ => handle_note_editor_normal(editor, key),
     };
     match signal {
         NoteEditorSignal::Handled => {}
         NoteEditorSignal::SaveFailed(msg) => app.flash(msg),
+        NoteEditorSignal::OpenExternal(path) => app.queue_editor_path(path),
         // First Esc: back to the notes list, `active_editor` becomes `None`,
         // `Mode::Notes` itself untouched. A *second* Esc from there (now the
         // bare list, handled by `handle_notes` above) is what closes the
         // whole popup to `Mode::Normal`.
         // `:q`/`:wq`/`:x` behave exactly like Esc for the floating popup:
         // both pop back to the notes list, `active_editor` becomes `None`.
+        // A dirty buffer blocks the Esc (not `:q!`): Esc is a reflex in
+        // vim's Normal mode, and closing here would silently drop the edits.
+        NoteEditorSignal::Esc if editor_is_dirty(app) => app.flash(UNSAVED_WARNING),
         NoteEditorSignal::Esc | NoteEditorSignal::CloseRequested => app.close_note_editor(),
     }
+}
+
+fn editor_is_dirty(app: &App) -> bool {
+    app.notes_popup
+        .active_editor
+        .as_ref()
+        .is_some_and(NoteEditorState::dirty)
 }
 
 /// T11 (extended by T12 to multiple tabs): the active pinned/docked note
@@ -617,12 +687,13 @@ fn handle_pinned_note_key(app: &mut App, key: KeyEvent, editor_mode: Option<Note
         return;
     };
     let signal = match mode {
-        NoteEditorMode::Normal => handle_note_editor_normal(editor, key),
         NoteEditorMode::Insert => handle_note_editor_insert(editor, key),
+        _ => handle_note_editor_normal(editor, key),
     };
     match signal {
         NoteEditorSignal::Handled => {}
         NoteEditorSignal::SaveFailed(msg) => app.flash(msg),
+        NoteEditorSignal::OpenExternal(path) => app.queue_editor_path(path),
         // The pinned note has no list to step back to — Esc from its Normal
         // sub-mode "steps back out" the same way `z` does: focus returns to
         // the main app, but the note stays pinned and visible.
@@ -639,11 +710,12 @@ fn handle_pinned_note_key(app: &mut App, key: KeyEvent, editor_mode: Option<Note
     }
 }
 
-/// Normal sub-mode of the embedded note editor: `hjkl`/arrows move the
-/// cursor, `i` enters Insert, `Ctrl+S` saves (see the module doc on
-/// `src/app/note_editor.rs` for why this key was chosen over a
-/// `:`-command-line this codebase doesn't have), Esc reports
-/// [`NoteEditorSignal::Esc`] for the caller to interpret. Operates directly
+/// Normal and Visual sub-modes of the embedded note editor: the vim-style
+/// motions/operators/commands live in `src/app/note_editor/vim.rs`
+/// (`NoteEditorState::normal_key`); this layer adds the keys that need the
+/// app around the editor — `Ctrl+S` saves, `Ctrl+R` redoes, `E` saves and
+/// opens the note in `$EDITOR`, and an Esc with nothing left to cancel
+/// reports [`NoteEditorSignal::Esc`] for the caller to interpret. Operates directly
 /// on `&mut NoteEditorState` (not through `App`'s `note_editor_*`
 /// delegators) so this exact function serves both the floating popup's
 /// editor and T11's pinned one — see [`NoteEditorSignal`]'s doc comment.
@@ -655,23 +727,53 @@ fn handle_note_editor_normal(editor: &mut NoteEditorState, key: KeyEvent) -> Not
     if editor.command_prompt().is_some() {
         return handle_note_editor_command_prompt(editor, key);
     }
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('s') => {
+                return match editor.save() {
+                    Ok(()) => NoteEditorSignal::Handled,
+                    Err(e) => NoteEditorSignal::SaveFailed(format!("note save failed: {e}")),
+                };
+            }
+            KeyCode::Char('r') => {
+                editor.redo();
+            }
+            _ => {}
+        }
+        return NoteEditorSignal::Handled;
+    }
+    if key.code == KeyCode::Char('E') && editor.is_idle() {
         return match editor.save() {
-            Ok(()) => NoteEditorSignal::Handled,
+            Ok(()) => NoteEditorSignal::OpenExternal(editor.path().clone()),
             Err(e) => NoteEditorSignal::SaveFailed(format!("note save failed: {e}")),
         };
     }
-    match key.code {
-        KeyCode::Char('j') | KeyCode::Down => editor.move_down(),
-        KeyCode::Char('k') | KeyCode::Up => editor.move_up(),
-        KeyCode::Char('h') | KeyCode::Left => editor.move_left(),
-        KeyCode::Char('l') | KeyCode::Right => editor.move_right(),
-        KeyCode::Char('i') => editor.enter_insert(),
-        KeyCode::Char(':') => editor.open_command_prompt(),
-        KeyCode::Esc => return NoteEditorSignal::Esc,
-        _ => {}
+    let Some(editor_key) = editor_key(key) else {
+        return NoteEditorSignal::Handled;
+    };
+    match editor.normal_key(editor_key) {
+        NormalOutcome::Handled => NoteEditorSignal::Handled,
+        NormalOutcome::Esc => NoteEditorSignal::Esc,
     }
-    NoteEditorSignal::Handled
+}
+
+/// Map a crossterm key onto the note editor's own key type, or `None` for
+/// keys it has no use for.
+fn editor_key(key: KeyEvent) -> Option<EditorKey> {
+    Some(match key.code {
+        KeyCode::Char(c) => EditorKey::Char(c),
+        KeyCode::Enter => EditorKey::Enter,
+        KeyCode::Esc => EditorKey::Esc,
+        KeyCode::Backspace => EditorKey::Backspace,
+        KeyCode::Delete => EditorKey::Delete,
+        KeyCode::Left => EditorKey::Left,
+        KeyCode::Right => EditorKey::Right,
+        KeyCode::Up => EditorKey::Up,
+        KeyCode::Down => EditorKey::Down,
+        KeyCode::Home => EditorKey::Home,
+        KeyCode::End => EditorKey::End,
+        _ => return None,
+    })
 }
 
 /// T13's `:`-command prompt sub-state of the editor's Normal sub-mode
@@ -716,7 +818,8 @@ fn handle_note_editor_command_prompt(
 }
 
 /// Insert sub-mode of the embedded note editor: characters type in at the
-/// cursor, Enter splits the line, Backspace deletes (joining with the
+/// cursor, Enter splits the line (continuing a markdown list item — see
+/// `src/app/note_editor/lists.rs`), Tab/Shift+Tab nest/un-nest, Backspace deletes (joining with the
 /// previous line at column 0), `Ctrl+S` saves, Esc returns to the editor's
 /// own Normal sub-mode — it does not leave the editor (see
 /// `NoteEditorState::esc_to_normal`), so unlike the Normal sub-mode's Esc
@@ -731,7 +834,9 @@ fn handle_note_editor_insert(editor: &mut NoteEditorState, key: KeyEvent) -> Not
     }
     match key.code {
         KeyCode::Esc => editor.esc_to_normal(),
-        KeyCode::Enter => editor.split_line(),
+        KeyCode::Enter => editor.newline(),
+        KeyCode::Tab => editor.insert_tab(),
+        KeyCode::BackTab => editor.outdent_current_line(),
         KeyCode::Backspace => editor.backspace(),
         KeyCode::Delete => editor.delete_forward(),
         KeyCode::Left => editor.move_left(),
@@ -1779,7 +1884,7 @@ fn apply_action(app: &mut App, action: Action) {
             app.recompute_visible();
         }
         Action::TogglePinFocus => app.toggle_pin_focus(),
-        Action::ClosePinnedNote => app.close_pinned_note(),
+        Action::ClosePinnedNote => app.close_pinned_note_if_saved(),
     }
 }
 
@@ -3055,6 +3160,31 @@ mod tests {
     }
 
     #[test]
+    fn esc_does_not_close_an_editor_with_unsaved_changes() {
+        let dir = std::env::temp_dir().join(format!(
+            "tuxedo-notes-editor-dirty-esc-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = build_notes_app_with_two_files(&dir);
+
+        handle_notes(&mut app, key('i'));
+        handle_notes(&mut app, key('x'));
+        handle_notes(&mut app, esc_key()); // Insert -> Normal
+        handle_notes(&mut app, esc_key()); // blocked: unsaved
+
+        assert!(app.notes_popup.active_editor.is_some(), "editor stays open");
+        assert_eq!(app.flash_active(), Some(UNSAVED_WARNING));
+
+        handle_notes(&mut app, ctrl('s'));
+        handle_notes(&mut app, esc_key());
+        assert!(app.notes_popup.active_editor.is_none(), "saved: Esc closes");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn while_editor_is_active_list_keys_do_not_leak_to_the_list() {
         let dir = std::env::temp_dir().join(format!(
             "tuxedo-notes-editor-noleak-{}-{:?}",
@@ -3928,10 +4058,7 @@ mod tests {
         let mut app = build_notes_app_with_two_files(&dir);
         let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
         handle_notes(&mut app, key('e')); // Normal sub-mode, cursor at column 0
-        for _ in 0.."content a".len() {
-            handle_notes(&mut app, key('l')); // walk to the end of the line
-        }
-        handle_notes(&mut app, key('i'));
+        handle_notes(&mut app, key('A')); // append at the end of the line
         for c in " appended".chars() {
             handle_notes(&mut app, key(c));
         }
@@ -4034,10 +4161,7 @@ mod tests {
             let mut app = build_notes_app_with_two_files(&dir);
             let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
             handle_notes(&mut app, key('e')); // Normal sub-mode, cursor at column 0
-            for _ in 0.."content a".len() {
-                handle_notes(&mut app, key('l')); // walk to the end of the line
-            }
-            handle_notes(&mut app, key('i'));
+            handle_notes(&mut app, key('A')); // append at the end of the line
             for c in " edited".chars() {
                 handle_notes(&mut app, key(c));
             }
@@ -4069,10 +4193,7 @@ mod tests {
             let mut app = build_notes_app_with_two_pinned_tabs(&dir);
             let notes_folder = app.notes_popup.folder.clone().expect("folder").dir;
             assert_eq!(app.active_pin, 1, "b.md tab active");
-            for _ in 0.."content b".len() {
-                handle_key(&mut app, key('l'), &KeyBindings::default()); // walk to end
-            }
-            handle_key(&mut app, key('i'), &KeyBindings::default());
+            handle_key(&mut app, key('A'), &KeyBindings::default()); // append at end
             for c in " edited".chars() {
                 handle_key(&mut app, key(c), &KeyBindings::default());
             }
