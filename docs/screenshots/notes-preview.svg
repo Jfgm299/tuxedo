@@ -132,7 +132,7 @@
 <text x="480.00" y="12.48" fill="#6b7280">•</text>
 <text x="504.00" y="12.48" fill="#6b7280">1</text>
 <text x="512.00" y="12.48" fill="#6b7280">5</text>
-<text x="528.00" y="12.48" fill="#c89a6e">┌</text>
+<text x="528.00" y="12.48" fill="#c89a6e">╭</text>
 <text x="544.00" y="12.48" fill="#8aa9c9" font-weight="bold">d</text>
 <text x="552.00" y="12.48" fill="#8aa9c9" font-weight="bold">e</text>
 <text x="560.00" y="12.48" fill="#8aa9c9" font-weight="bold">c</text>
@@ -191,7 +191,7 @@
 <text x="1008.00" y="12.48" fill="#c89a6e">─</text>
 <text x="1016.00" y="12.48" fill="#c89a6e">─</text>
 <text x="1024.00" y="12.48" fill="#c89a6e">─</text>
-<text x="1032.00" y="12.48" fill="#c89a6e">┐</text>
+<text x="1032.00" y="12.48" fill="#c89a6e">╮</text>
 <text x="528.00" y="28.48" fill="#c89a6e">│</text>
 <text x="544.00" y="28.48" fill="#8aa9c9" font-weight="bold">Q</text>
 <text x="552.00" y="28.48" fill="#8aa9c9" font-weight="bold">2</text>
@@ -1234,7 +1234,7 @@
 <text x="1032.00" y="460.48" fill="#c89a6e">│</text>
 <text x="528.00" y="476.48" fill="#c89a6e">│</text>
 <text x="1032.00" y="476.48" fill="#c89a6e">│</text>
-<text x="528.00" y="492.48" fill="#c89a6e">└</text>
+<text x="528.00" y="492.48" fill="#c89a6e">╰</text>
 <text x="536.00" y="492.48" fill="#c89a6e">─</text>
 <text x="544.00" y="492.48" fill="#c89a6e">─</text>
 <text x="552.00" y="492.48" fill="#c89a6e">─</text>
@@ -1297,7 +1297,7 @@
 <text x="1008.00" y="492.48" fill="#c89a6e">─</text>
 <text x="1016.00" y="492.48" fill="#c89a6e">─</text>
 <text x="1024.00" y="492.48" fill="#c89a6e">─</text>
-<text x="1032.00" y="492.48" fill="#c89a6e">┘</text>
+<text x="1032.00" y="492.48" fill="#c89a6e">╯</text>
 <text x="8.00" y="508.48" fill="#1a1d23" font-weight="bold">P</text>
 <text x="16.00" y="508.48" fill="#1a1d23" font-weight="bold">R</text>
 <text x="24.00" y="508.48" fill="#1a1d23" font-weight="bold">E</text>

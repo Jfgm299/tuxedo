@@ -459,7 +459,7 @@
 <text x="48.00" y="108.48" fill="#7fb3a8">m</text>
 <text x="56.00" y="108.48" fill="#7fb3a8">e</text>
 <text x="168.00" y="108.48" fill="#6b7280">1</text>
-<text x="208.00" y="108.48" fill="#2a2f38">┌</text>
+<text x="208.00" y="108.48" fill="#2a2f38">╭</text>
 <text x="224.00" y="108.48" fill="#8aa9c9" font-weight="bold">t</text>
 <text x="232.00" y="108.48" fill="#8aa9c9" font-weight="bold">u</text>
 <text x="240.00" y="108.48" fill="#8aa9c9" font-weight="bold">x</text>
@@ -532,7 +532,7 @@
 <text x="800.00" y="108.48" fill="#2a2f38">─</text>
 <text x="808.00" y="108.48" fill="#2a2f38">─</text>
 <text x="816.00" y="108.48" fill="#2a2f38">─</text>
-<text x="824.00" y="108.48" fill="#2a2f38">┐</text>
+<text x="824.00" y="108.48" fill="#2a2f38">╮</text>
 <text x="832.00" y="108.48" fill="#6b7280">s</text>
 <text x="856.00" y="108.48" fill="#c89a6e">@</text>
 <text x="864.00" y="108.48" fill="#c89a6e">l</text>
@@ -881,7 +881,7 @@
 <text x="592.00" y="396.48" fill="#6b7280">e</text>
 <text x="600.00" y="396.48" fill="#6b7280">l</text>
 <text x="824.00" y="396.48" fill="#2a2f38">│</text>
-<text x="208.00" y="412.48" fill="#2a2f38">└</text>
+<text x="208.00" y="412.48" fill="#2a2f38">╰</text>
 <text x="216.00" y="412.48" fill="#2a2f38">─</text>
 <text x="224.00" y="412.48" fill="#2a2f38">─</text>
 <text x="232.00" y="412.48" fill="#2a2f38">─</text>
@@ -958,7 +958,7 @@
 <text x="800.00" y="412.48" fill="#2a2f38">─</text>
 <text x="808.00" y="412.48" fill="#2a2f38">─</text>
 <text x="816.00" y="412.48" fill="#2a2f38">─</text>
-<text x="824.00" y="412.48" fill="#2a2f38">┘</text>
+<text x="824.00" y="412.48" fill="#2a2f38">╯</text>
 <text x="8.00" y="508.48" fill="#1a1d23" font-weight="bold">C</text>
 <text x="16.00" y="508.48" fill="#1a1d23" font-weight="bold">O</text>
 <text x="24.00" y="508.48" fill="#1a1d23" font-weight="bold">M</text>

@@ -8,7 +8,7 @@ expression: buffer_to_text(&buf)
    +work             4      1 [x] ▸ (A) Finish Q2 board deck +work created   2026-05-01             
    +health           3      2 [x]   (A) Call dentist to reschedule due       2026-05-06  today      
    +finance          2     (3)  PRIORITY B  ────────────────────── projects  +work                  
-   +home            ┌ tuxedo · command ────────────────────────────────────────┐ptop                
+   +home            ╭ tuxedo · command ────────────────────────────────────────╮ptop                
    +learning        │ > █                                                      │                    
    +personal        │──────────────────────────────────────────────────────────│                    
    +travel          │ ▶ new task                                             n │                    
@@ -27,7 +27,7 @@ expression: buffer_to_text(&buf)
                     │   open task notes                                      o │                    
                     │   undo                                                 u │                    
                     │  ↑↓ / Ctrl-N/P navigate · Enter run · Esc cancel         │                    
-                    └──────────────────────────────────────────────────────────┘                    
+                    ╰──────────────────────────────────────────────────────────╯                    
                                                                                                     
                                                                                                     
                                                                                                     

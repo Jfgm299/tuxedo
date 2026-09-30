@@ -14,9 +14,8 @@
 //! T13 adds a `folke/noice.nvim`-style `:`-command prompt
 //! (`NoteEditorState::command_prompt`, see `src/app/note_editor.rs` and
 //! `odd/tasks/notes-popup.md`'s Round 2 exploration note): a small
-//! **rounded-border** box (`BorderType::Rounded` — deliberately different
-//! from every other box in this app, which uses plain square
-//! `Borders::ALL`, to visually match noice's actual look) near the top of
+//! **rounded-border** box (`BorderType::Rounded`, like every box in this
+//! app, matching noice's actual look) near the top of
 //! `render_editor`'s own `area`, horizontally centered WITHIN it. Because
 //! `render_editor` already receives the exact contextual `Rect` for both
 //! the floating popup (`render`) and T11+T12's pinned panel
@@ -164,6 +163,7 @@ pub fn render_editor(
     };
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color).bg(theme.panel))
         .title(Line::from(vec![Span::styled(
             if editor.mode() == NoteEditorMode::Preview {

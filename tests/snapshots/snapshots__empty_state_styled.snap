@@ -10,7 +10,7 @@ expression: buffer_to_styled(&buf)
 {bg=#1a1d23}                                                                                                    {/}
 {bg=#1a1d23}                                                                                                    {/}
 {bg=#1a1d23}                                                                                                    {/}
-{bg=#1a1d23}                      {/}{fg=#2a2f38 bg=#1a1d23}┌ {/}{fg=#8aa9c9 bg=#1a1d23 mod=bold}tuxedo{/}{fg=#2a2f38 bg=#1a1d23} ──────────────────────────────────────────────┐{/}{bg=#1a1d23}                      {/}
+{bg=#1a1d23}                      {/}{fg=#2a2f38 bg=#1a1d23}╭ {/}{fg=#8aa9c9 bg=#1a1d23 mod=bold}tuxedo{/}{fg=#2a2f38 bg=#1a1d23} ──────────────────────────────────────────────╮{/}{bg=#1a1d23}                      {/}
 {bg=#1a1d23}                      {/}{fg=#2a2f38 bg=#1a1d23}│{/}{fg=#c8ccd4 bg=#1a1d23}                    {/}{fg=#8aa9c9 bg=#1a1d23}██{/}{fg=#c8ccd4 bg=#1a1d23}          {/}{fg=#8aa9c9 bg=#1a1d23}██{/}{fg=#c8ccd4 bg=#1a1d23}                    {/}{fg=#2a2f38 bg=#1a1d23}│{/}{bg=#1a1d23}                      {/}
 {bg=#1a1d23}                      {/}{fg=#2a2f38 bg=#1a1d23}│{/}{fg=#c8ccd4 bg=#1a1d23}                    {/}{fg=#8aa9c9 bg=#1a1d23}████{/}{fg=#c8ccd4 bg=#1a1d23}  {/}{fg=#e07a7a bg=#1a1d23}██{/}{fg=#c8ccd4 bg=#1a1d23}  {/}{fg=#8aa9c9 bg=#1a1d23}████{/}{fg=#c8ccd4 bg=#1a1d23}                    {/}{fg=#2a2f38 bg=#1a1d23}│{/}{bg=#1a1d23}                      {/}
 {bg=#1a1d23}                      {/}{fg=#2a2f38 bg=#1a1d23}│{/}{fg=#c8ccd4 bg=#1a1d23}                    {/}{fg=#8aa9c9 bg=#1a1d23}██████{/}{fg=#e07a7a bg=#1a1d23}██{/}{fg=#8aa9c9 bg=#1a1d23}██████{/}{fg=#c8ccd4 bg=#1a1d23}                    {/}{fg=#2a2f38 bg=#1a1d23}│{/}{bg=#1a1d23}                      {/}
@@ -25,7 +25,7 @@ expression: buffer_to_styled(&buf)
 {bg=#1a1d23}                      {/}{fg=#2a2f38 bg=#1a1d23}│{/}{fg=#c8ccd4 bg=#1a1d23}   {/}{fg=#c89a6e bg=#1a1d23 mod=bold}q   {/}{fg=#c8ccd4 bg=#1a1d23}quit                                           {/}{fg=#2a2f38 bg=#1a1d23}│{/}{bg=#1a1d23}                      {/}
 {bg=#1a1d23}                      {/}{fg=#2a2f38 bg=#1a1d23}│{/}{fg=#c8ccd4 bg=#1a1d23}                                                      {/}{fg=#2a2f38 bg=#1a1d23}│{/}{bg=#1a1d23}                      {/}
 {bg=#1a1d23}                      {/}{fg=#2a2f38 bg=#1a1d23}│{/}{fg=#c8ccd4 bg=#1a1d23}   {/}{fg=#6b7280 bg=#1a1d23}format: {/}{fg=#e07a7a bg=#1a1d23 mod=bold}(A) {/}{fg=#c8ccd4 bg=#1a1d23}Buy milk {/}{fg=#7fb3a8 bg=#1a1d23}+shop {/}{fg=#c89a6e bg=#1a1d23}@home {/}{fg=#d4b06a bg=#1a1d23}due:2026-05-12{/}{fg=#c8ccd4 bg=#1a1d23}    {/}{fg=#2a2f38 bg=#1a1d23}│{/}{bg=#1a1d23}                      {/}
-{bg=#1a1d23}                      {/}{fg=#2a2f38 bg=#1a1d23}└──────────────────────────────────────────────────────┘{/}{bg=#1a1d23}                      {/}
+{bg=#1a1d23}                      {/}{fg=#2a2f38 bg=#1a1d23}╰──────────────────────────────────────────────────────╯{/}{bg=#1a1d23}                      {/}
 {bg=#1a1d23}                                                                                                    {/}
 {bg=#1a1d23}                                                                                                    {/}
 {bg=#1a1d23}                                                                                                    {/}

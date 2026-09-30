@@ -14,14 +14,14 @@ expression: buffer_to_text(&buf)
    +travel           1     (2)  PRIORITY C  ──────────────────────                                  
                             6   (C) Pay quarterly estimated taxes  (A) 2026-05-01 Finish Q2 board   
  CONTEXTS                   7   (C) Order new running shoes +healt deck +work @laptop               
-   @errands          4     (8)┌ ADD TASK ────────────────────────────┐:2026-05-06                   
+   @errands          4     (8)╭ ADD TASK ────────────────────────────╮:2026-05-06                   
    @home             4      8 │                                      │                              
    @laptop           4      9 │  › fore summer trip +travel @errands█│                              
    @phone            3     10 │  ok · pri A · 1 +project 1 @context  │                              
                            11 │                                      │                              
                            12 │  format: (A) Buy milk +shop @home due│                              
                            13 │                                      │                              
-                           14 └───┌ DUE ───────────────────────────────────────────┐                
+                           14 ╰───╭ DUE ───────────────────────────────────────────╮                
                            15     │  ‹  May 2026  ›                                │                
                                   │    S   M   T   W   T   F   S                   │                
                                   │                        1   2                   │                
@@ -33,4 +33,4 @@ expression: buffer_to_text(&buf)
                                   │                                                │                
                                   │  Thu May 7                                     │                
                                   │  t today · T tmw · w +1w · m +1mo · x clear    │                
- INSERT   Enter save · Esc normal └────────────────────────────────────────────────┘tuxedo 2026.8.1
+ INSERT   Enter save · Esc normal ╰────────────────────────────────────────────────╯tuxedo 2026.8.1

@@ -8,7 +8,7 @@ expression: buffer_to_text(&buf)
    +work             4      1 ▸ (A) Finish Q2 board deck +work @la created   2026-05-01             
    +health           3      2   (A) Call dentist to reschedule cle due       2026-05-06  today      
    +finance          2     (3)  PRIORITY B  ────────────────────── projects  +work                  
-   +home            ┌ tuxedo · command ────────────────────────────────────────┐ptop                
+   +home            ╭ tuxedo · command ────────────────────────────────────────╮ptop                
    +learning        │ > arch█  4 matches                                       │                    
    +personal        │──────────────────────────────────────────────────────────│                    
    +travel          │ ▶ archive completed tasks                              A │                    
@@ -27,7 +27,7 @@ expression: buffer_to_text(&buf)
                     │                                                          │                    
                     │                                                          │                    
                     │  ↑↓ / Ctrl-N/P navigate · Enter run · Esc cancel         │                    
-                    └──────────────────────────────────────────────────────────┘                    
+                    ╰──────────────────────────────────────────────────────────╯                    
                                                                                                     
                                                                                                     
                                                                                                     

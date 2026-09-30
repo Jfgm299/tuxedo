@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 use crate::app::{
     App, BuilderField, CalendarTarget, DraftOverlay, Mode, REC_UNIT_ORDER, TokenKind, WeekStart,
@@ -271,6 +271,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border).bg(theme.panel))
         .title(Line::from(vec![Span::styled(
             title,
@@ -430,6 +431,7 @@ pub fn render_prompt(frame: &mut Frame, area: Rect, app: &App) {
     };
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border).bg(theme.panel))
         .title(Line::from(Span::styled(
             label,
@@ -650,6 +652,7 @@ fn render_slash_menu(frame: &mut Frame, dlg: Rect, screen: Rect, app: &App) {
     frame.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border).bg(theme.panel))
         .style(Style::default().bg(theme.panel));
     let inner = block.inner(area);
@@ -761,6 +764,7 @@ fn render_calendar(frame: &mut Frame, dlg: Rect, screen: Rect, app: &App) {
     };
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border).bg(theme.panel))
         .title(Line::from(Span::styled(
             format!(" {label} "),
@@ -885,6 +889,7 @@ fn render_recurrence_builder(frame: &mut Frame, dlg: Rect, screen: Rect, app: &A
     frame.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border).bg(theme.panel))
         .title(Line::from(Span::styled(
             " ↻ REPEAT ",
@@ -1077,6 +1082,7 @@ fn render_priority_chooser(frame: &mut Frame, dlg: Rect, screen: Rect, app: &App
     frame.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border).bg(theme.panel))
         .title(Line::from(Span::styled(
             " PRIORITY ",
