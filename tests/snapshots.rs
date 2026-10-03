@@ -412,6 +412,7 @@ fn insert_recurrence_builder() {
             interval: 1,
             unit: RecUnit::Week,
             strict: true,
+            days: 0,
             field: BuilderField::Interval,
             anchor: None,
         },

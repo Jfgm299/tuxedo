@@ -131,6 +131,10 @@ impl App {
         if picked.priority.is_some() {
             p.priority = picked.priority;
         }
+        // A picked "every fri, sat, sun" still starts on the first of them.
+        if p.due.is_none() {
+            p.due = p.rec.as_deref().and_then(|r| nl::first_rec_day(r, today));
+        }
         det
     }
 
@@ -336,6 +340,7 @@ impl App {
                     state.interval = spec.n.max(1);
                     state.unit = spec.unit;
                     state.strict = spec.strict;
+                    state.days = spec.days;
                 }
             }
             FieldKind::Priority => {
@@ -485,6 +490,14 @@ pub fn describe_rec(rec: &str) -> String {
         RecUnit::Month => "month",
         RecUnit::Year => "year",
     };
+    if spec.days != 0 {
+        let days = crate::recurrence::format_days(spec.days).replace(',', ", ");
+        return if spec.n == 1 {
+            format!("every {days}")
+        } else {
+            format!("every {} weeks: {days}", spec.n)
+        };
+    }
     if spec.n == 1 {
         format!("every {unit}")
     } else {
@@ -643,5 +656,6 @@ mod tests {
         assert_eq!(describe_rec("1w"), "every week");
         assert_eq!(describe_rec("+2m"), "every 2 months");
         assert_eq!(describe_rec("3b"), "every 3 weekdays");
+        assert_eq!(describe_rec("+1w:fri,sat,sun"), "every fri, sat, sun");
     }
 }

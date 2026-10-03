@@ -13,18 +13,16 @@ expression: buffer_to_text(&buf)
    +personal         1      5   (B) Draft hiring rubric for senior RAW                              
    +travel           1     (2)  PRIORITY C  ──────────────────────                                  
                             6   (C) Pay quarterly estimated taxes  (A) 2026-05-01 Finish Q2 board   
- CONTEXTS ╭ ADD TASK ────────────────────────────────────────────────────────────────────╮          
-   @errand│                                                                              │          
-   @home  │  › Buy milk ▐+groceries▌█                                                    │          
-   @laptop│                                                                              │          
-   @phone │  ╭───╮ ╭───╮ ╭───╮ ╭─────────────╮ ╭───╮ ╭───╮                               │          
-          │  │ ▦ │ │ ◷ │ │ ↻ │ │ + groceries │ │ @ │ │ ⚑ │                               │          
-          │  ╰───╯ ╰───╯ ╰───╯ ╰─────────────╯ ╰───╯ ╰───╯                               │          
+ CONTEXTS                   7   (C) Order new running shoes +healt deck +work @laptop               
+   @errand╭──────────────────────────────────────────────────────────────────────────────╮          
+   @home  │                                                                              │          
+   @laptop│  > Buy milk  +groceries ▏                                              ↑     │          
+   @phone │                                                                              │          
+          │     ▦       ◷       ↻      + groceries      @       ⚑                        │          
           │                                                                              │          
-          │  Tab chips · Ctrl+Z undo detection · Enter add · Esc                         │          
           ╰──────────────────────────────────────────────────────────────────────────────╯          
-              ╭ PRIORITY ────────────╮                                                              
-              │  (A)                 │                                                              
+              ╭ PRIORITY ────────────╮an Saturday hike with K. @ph                                  
+              │  (A)                 │place bathroom faucet washer                                  
               │  (B)                 │                                                              
               │  (C)                 │                                                              
               │  clear               │                                                              
@@ -33,4 +31,6 @@ expression: buffer_to_text(&buf)
               ╰──────────────────────╯                                                              
                                                                                                     
                                                                                                     
- INSERT   type naturally: tomorrow, at 6pm, every week, +proj15 open · 2026-05-06 · tuxedo 2026.8.1
+                                                                                                    
+                                                                                                    
+ INSERT   type naturally: tomorrow at 6pm, every fri and sat,15 open · 2026-05-06 · tuxedo 2026.8.1

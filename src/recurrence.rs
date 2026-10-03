@@ -10,6 +10,7 @@
 //! rec:Nm     // every N months   (clamps month-end: Jan 31 + 1m = Feb 28/29)
 //! rec:Ny     // every N years
 //! rec:+Nu    // strict: anchored to the previous due date instead
+//! rec:+1w:fri,sat,sun  // on those weekdays, every N weeks
 //! ```
 //!
 //! This module is pure logic — no I/O, no app state. The completion-flow
@@ -35,6 +36,42 @@ pub struct RecSpec {
     pub strict: bool,
     pub n: u32,
     pub unit: RecUnit,
+    /// Weekdays a weekly rule repeats on (bit 0 = Monday … bit 6 = Sunday);
+    /// 0 means "the same weekday as the anchor".
+    pub days: u8,
+}
+
+const DAY_NAMES: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+/// Bit of `wd` in [`RecSpec::days`].
+pub fn day_bit(wd: Weekday) -> u8 {
+    1 << wd.num_days_from_monday()
+}
+
+/// The weekdays in a [`RecSpec::days`] mask, Monday first.
+pub fn days_in(mask: u8) -> Vec<Weekday> {
+    (0..7u8)
+        .filter(|i| mask & (1 << i) != 0)
+        .filter_map(|i| Weekday::try_from(i).ok())
+        .collect()
+}
+
+/// `days` as the `rec:` suffix, e.g. `fri,sat,sun`.
+pub fn format_days(mask: u8) -> String {
+    (0..7)
+        .filter(|i| mask & (1 << i) != 0)
+        .map(|i| DAY_NAMES[i])
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_days(s: &str) -> Option<u8> {
+    let mut mask = 0u8;
+    for part in s.split(',') {
+        let i = DAY_NAMES.iter().position(|d| *d == part)?;
+        mask |= 1 << i;
+    }
+    Some(mask)
 }
 
 /// Parse the *value* of a `rec:` tag, e.g. `"+1m"` or `"3b"`. Returns `None`
@@ -42,6 +79,15 @@ pub struct RecSpec {
 /// Lone `+` (no digits) and `-` prefixes are also rejected — recurrence only
 /// moves forward.
 pub fn parse_rec_spec(value: &str) -> Option<RecSpec> {
+    // `+1w:fri,sat,sun` — a weekly rule on given weekdays.
+    if let Some((rule, days)) = value.split_once(':') {
+        let spec = parse_rec_spec(rule)?;
+        if spec.unit != RecUnit::Week {
+            return None;
+        }
+        let days = parse_days(days)?;
+        return Some(RecSpec { days, ..spec });
+    }
     let bytes = value.as_bytes();
     if bytes.is_empty() {
         return None;
@@ -73,7 +119,12 @@ pub fn parse_rec_spec(value: &str) -> Option<RecSpec> {
         'y' => RecUnit::Year,
         _ => return None,
     };
-    Some(RecSpec { strict, n, unit })
+    Some(RecSpec {
+        strict,
+        n,
+        unit,
+        days: 0,
+    })
 }
 
 /// Advance `date` by `spec`. Returns `None` only when `chrono` overflows
@@ -88,6 +139,9 @@ pub fn parse_rec_spec(value: &str) -> Option<RecSpec> {
 /// a weekend rolls forward to Monday before counting, so "Saturday + 1b"
 /// resolves to Monday — same convention as dorecur.
 pub fn advance(date: NaiveDate, spec: &RecSpec) -> Option<NaiveDate> {
+    if spec.unit == RecUnit::Week && spec.days != 0 {
+        return advance_days(date, spec);
+    }
     match spec.unit {
         RecUnit::Day => date.checked_add_days(Days::new(u64::from(spec.n))),
         RecUnit::Week => date.checked_add_days(Days::new(u64::from(spec.n) * 7)),
@@ -95,6 +149,25 @@ pub fn advance(date: NaiveDate, spec: &RecSpec) -> Option<NaiveDate> {
         RecUnit::Year => date.checked_add_months(Months::new(spec.n.checked_mul(12)?)),
         RecUnit::BusinessDay => advance_business(date, spec.n),
     }
+}
+
+/// Next day in `spec.days` after `date`. Within the same week (Monday to
+/// Sunday) that is simply the next listed day; past the week's last listed
+/// day it jumps to the first one, `n - 1` weeks further on.
+fn advance_days(date: NaiveDate, spec: &RecSpec) -> Option<NaiveDate> {
+    for step in 1..=7u64 {
+        let next = date.checked_add_days(Days::new(step))?;
+        if spec.days & day_bit(next.weekday()) != 0 {
+            let wrapped =
+                next.weekday().num_days_from_monday() <= date.weekday().num_days_from_monday();
+            return if wrapped {
+                next.checked_add_days(Days::new(u64::from(spec.n - 1) * 7))
+            } else {
+                Some(next)
+            };
+        }
+    }
+    None
 }
 
 fn advance_business(mut date: NaiveDate, n: u32) -> Option<NaiveDate> {
@@ -119,6 +192,27 @@ mod tests {
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn weekly_on_given_days() {
+        let spec = parse_rec_spec("+1w:fri,sat,sun").unwrap();
+        assert_eq!(spec.days, 0b111_0000);
+        assert_eq!(format_days(spec.days), "fri,sat,sun");
+        // Fri 2026-10-09 → Sat → Sun → next Fri.
+        assert_eq!(advance(d("2026-10-09"), &spec), Some(d("2026-10-10")));
+        assert_eq!(advance(d("2026-10-10"), &spec), Some(d("2026-10-11")));
+        assert_eq!(advance(d("2026-10-11"), &spec), Some(d("2026-10-16")));
+        // From a Wednesday, the next listed day.
+        assert_eq!(advance(d("2026-10-07"), &spec), Some(d("2026-10-09")));
+        // Every 2 weeks on mon,wed: Wed → Mon two weeks on.
+        let spec = parse_rec_spec("+2w:mon,wed").unwrap();
+        assert_eq!(advance(d("2026-10-05"), &spec), Some(d("2026-10-07")));
+        assert_eq!(advance(d("2026-10-07"), &spec), Some(d("2026-10-19")));
+        // Days only go with weeks, and must be known names.
+        assert!(parse_rec_spec("+1m:fri").is_none());
+        assert!(parse_rec_spec("+1w:friday").is_none());
+        assert!(parse_rec_spec("+1w:").is_none());
     }
 
     #[test]

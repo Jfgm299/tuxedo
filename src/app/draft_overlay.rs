@@ -141,6 +141,9 @@ pub struct RecurrenceBuilderState {
     /// `true` writes `rec:+Nu` (strict — anchor on previous due), `false`
     /// writes `rec:Nu` (after-complete).
     pub strict: bool,
+    /// Weekdays of a weekly rule typed as "every fri, sat and sun"
+    /// (`RecSpec::days`); kept as is while the builder edits the rest.
+    pub days: u8,
     pub field: BuilderField,
     /// See `CalendarState::anchor`.
     pub anchor: Option<usize>,
@@ -635,6 +638,7 @@ impl App {
                 interval: spec.n.max(1),
                 unit: spec.unit,
                 strict: spec.strict,
+                days: spec.days,
                 field: BuilderField::Interval,
                 anchor: None,
             },
@@ -642,6 +646,7 @@ impl App {
                 interval: 1,
                 unit: RecUnit::Week,
                 strict: false,
+                days: 0,
                 field: BuilderField::Interval,
                 anchor: None,
             },
@@ -953,6 +958,10 @@ pub fn format_rec_value(state: &RecurrenceBuilderState) -> String {
         RecUnit::Month => "m",
         RecUnit::Year => "y",
     };
+    if state.unit == RecUnit::Week && state.days != 0 {
+        let days = recurrence::format_days(state.days);
+        return format!("{prefix}{}{unit}:{days}", state.interval);
+    }
     format!("{prefix}{}{unit}", state.interval)
 }
 
@@ -965,6 +974,7 @@ pub fn recurrence_next_preview(state: &RecurrenceBuilderState, today: &str) -> O
         strict: state.strict,
         n: state.interval,
         unit: state.unit,
+        days: state.days,
     };
     let date = NaiveDate::parse_from_str(today, "%Y-%m-%d").ok()?;
     recurrence::advance(date, &spec)
@@ -1087,6 +1097,7 @@ mod tests {
             interval: 2,
             unit: RecUnit::Month,
             strict: true,
+            days: 0,
             field: BuilderField::Interval,
             anchor: None,
         };
@@ -1095,6 +1106,7 @@ mod tests {
             interval: 1,
             unit: RecUnit::Week,
             strict: false,
+            days: 0,
             field: BuilderField::Interval,
             anchor: None,
         };

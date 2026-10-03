@@ -13,16 +13,16 @@ expression: buffer_to_text(&buf)
    +personal         1      5   (B) Draft hiring rubric for senior RAW                              
    +travel           1     (2)  PRIORITY C  ──────────────────────                                  
                             6   (C) Pay quarterly estimated taxes  (A) 2026-05-01 Finish Q2 board   
- CONTEXTS ╭ ADD TASK ────────────────────────────────────────────────────────────────────╮          
-   @errand│                                                                              │          
-   @home  │  › ▐⚑ (A) ▌Renew passport before summer trip ▐+travel▌ ▐@errands▌█           │          
-   @laptop│                                                                              │          
-   @phone │  ╭───╮ ╭───╮ ╭───╮ ╭──────────╮ ╭───────────╮ ╭───────╮                      │          
-          │  │ ▦ │ │ ◷ │ │ ↻ │ │ + travel │ │ @ errands │ │ ⚑ (A) │                      │          
-          │  ╰───╯ ╰───╯ ╰───╯ ╰──────────╯ ╰───────────╯ ╰───────╯                      │          
+ CONTEXTS                   7   (C) Order new running shoes +healt deck +work @laptop               
+   @errand╭──────────────────────────────────────────────────────────────────────────────╮          
+   @home  │                                                                              │          
+   @laptop│  > ⚑ (A) Renew passport before summer trip  +travel   @errands ▏       ↑     │          
+   @phone │                                                                              │          
+          │     ▦       ◷       ↻      + travel     @ errands     ⚑ (A)                  │          
           │                                                                              │          
-          │  T╭ DUE ───────────────────────────────────────────╮                         │          
-          ╰───│  ‹  May 2026  ›                                │─────────────────────────╯          
+          ╰──────────────────────────────────────────────────────────────────────────────╯          
+              ╭ DUE ───────────────────────────────────────────╮ph                                  
+              │  ‹  May 2026  ›                                │er                                  
               │    S   M   T   W   T   F   S                   │                                    
               │                        1   2                   │                                    
               │    3   4   5   6   7   8   9                   │                                    

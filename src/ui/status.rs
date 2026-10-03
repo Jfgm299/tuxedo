@@ -74,8 +74,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 DialogInputMode::Normal => {
                     "h/l navigate · w/b/e word · i/a insert · Enter save · Esc cancel"
                 }
+                DialogInputMode::Insert if app.live_chip_focus().is_some() => {
+                    "←/→ chips · Enter pick · x reject · Esc back to text"
+                }
                 DialogInputMode::Insert if app.live_add_active() => {
-                    "type naturally: tomorrow, at 6pm, every week, +project @context · Enter add"
+                    "type naturally: tomorrow at 6pm, every fri and sat, +project @context · Tab chips · Ctrl+Z undo · Enter add"
                 }
                 DialogInputMode::Insert => "Enter save · Esc normal",
             },

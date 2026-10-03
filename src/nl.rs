@@ -669,11 +669,13 @@ fn pass_sigiled(scratch: &mut Scratch, p: &mut ParsedNl) {
             continue;
         }
         let tok = scratch.word_orig((s, e)).to_string();
-        if let Some(name) = tok.strip_prefix('+') {
+        // A bare `+` / `@` is still being typed (or is just text).
+        let named = |n: &str| !n.is_empty() && todo::is_valid_tag_name(n);
+        if let Some(name) = tok.strip_prefix('+').filter(|n| named(n)) {
             push_unique(&mut p.projects, name);
             scratch.kind = Some(FieldKind::Project);
             scratch.mark(s, e);
-        } else if let Some(name) = tok.strip_prefix('@') {
+        } else if let Some(name) = tok.strip_prefix('@').filter(|n| named(n)) {
             push_unique(&mut p.contexts, name);
             scratch.kind = Some(FieldKind::Context);
             scratch.mark(s, e);
@@ -823,17 +825,15 @@ fn pass_recurrence(scratch: &mut Scratch, p: &mut ParsedNl) -> Option<Weekday> {
                 Some(v) => with_on_weekday(scratch, &words, i, v),
                 None => continue,
             }
-        } else if let Some(wd) = plural_weekday(w) {
-            // "fridays" on its own means every friday.
-            ("+1w".to_string(), 1, Some(wd))
+        } else if let Some((mask, count)) = plural_list(scratch, &words, i) {
+            // "fridays" on its own means every friday; "fridays and
+            // saturdays" both.
+            weekly_on(mask, count)
         } else if w == "on"
-            && let Some(wd) = words
-                .get(i + 1)
-                .filter(|r| scratch.is_live(r.0, r.1))
-                .and_then(|r| plural_weekday(scratch.word_lc(*r)))
+            && let Some((mask, count)) = plural_list(scratch, &words, i + 1)
         {
             // "on fridays".
-            ("+1w".to_string(), 2, Some(wd))
+            weekly_on(mask, count + 1)
         } else {
             continue;
         };
@@ -890,6 +890,13 @@ fn parse_every_phrase(
         return Some((format!("+2{unit}"), 3, None));
     }
 
+    // "every friday, saturday and sunday", "every weekend".
+    if let Some((mask, count)) = weekday_list(scratch, words, i + 1)
+        && mask.count_ones() > 1
+    {
+        let days = crate::recurrence::format_days(mask);
+        return Some((format!("+1w:{days}"), 1 + count, None));
+    }
     if let Some(wd) = parse_weekday(w1) {
         return Some(("+1w".to_string(), 2, Some(wd)));
     }
@@ -931,13 +938,83 @@ fn with_on_weekday(
     }
     let at = i + count;
     let live = |j: usize| words.get(j).is_some_and(|r| scratch.is_live(r.0, r.1));
-    if live(at) && live(at + 1) && scratch.word_lc(words[at]) == "on" {
-        let day = scratch.word_lc(words[at + 1]);
-        if let Some(wd) = parse_weekday(day).or_else(|| plural_weekday(day)) {
-            return (rec, count + 2, Some(wd));
+    if live(at)
+        && scratch.word_lc(words[at]) == "on"
+        && let Some((mask, n)) = weekday_list(scratch, words, at + 1)
+    {
+        if mask.count_ones() == 1 {
+            let wd = crate::recurrence::days_in(mask)[0];
+            return (rec, count + 1 + n, Some(wd));
         }
+        let days = crate::recurrence::format_days(mask);
+        return (format!("{rec}:{days}"), count + 1 + n, None);
     }
     (rec, count, wh)
+}
+
+/// A weekly rule on the weekdays of `mask`, as `pass_recurrence` returns it.
+fn weekly_on(mask: u8, count: usize) -> (String, usize, Option<Weekday>) {
+    if mask.count_ones() == 1 {
+        let wd = crate::recurrence::days_in(mask)[0];
+        return ("+1w".to_string(), count, Some(wd));
+    }
+    let days = crate::recurrence::format_days(mask);
+    (format!("+1w:{days}"), count, None)
+}
+
+/// A list of weekdays starting at `words[j]`: "friday, saturday and
+/// sunday", "mon,wed,fri", "weekend". Commas may stick to the words or stand
+/// apart. Returns the weekday mask (`RecSpec::days`) and the words used.
+fn weekday_list(scratch: &Scratch, words: &[(usize, usize)], j: usize) -> Option<(u8, usize)> {
+    let mut mask = 0u8;
+    let mut used = 0;
+    let mut k = j;
+    while let Some(r) = words.get(k) {
+        let w = scratch.word_lc(*r);
+        // A comma on its own joins like "and" (whatever other passes made
+        // of it).
+        if mask != 0 && w.chars().all(|c| c == ',') {
+            k += 1;
+            continue;
+        }
+        if !scratch.is_live(r.0, r.1) {
+            break;
+        }
+        let mut word_mask = 0u8;
+        let mut ok = true;
+        let mut joiner = false;
+        for part in w.split(',').filter(|p| !p.is_empty()) {
+            if let Some(wd) = parse_weekday(part).or_else(|| plural_weekday(part)) {
+                word_mask |= crate::recurrence::day_bit(wd);
+            } else if part == "weekend" || part == "weekends" {
+                word_mask |= crate::recurrence::day_bit(Weekday::Sat)
+                    | crate::recurrence::day_bit(Weekday::Sun);
+            } else if (part == "and" || part == "&") && mask != 0 {
+                joiner = true;
+            } else {
+                ok = false;
+                break;
+            }
+        }
+        if !ok || (word_mask == 0 && !joiner) {
+            break;
+        }
+        k += 1;
+        if word_mask != 0 {
+            mask |= word_mask;
+            used = k - j;
+        }
+    }
+    (mask != 0).then_some((mask, used))
+}
+
+/// Like [`weekday_list`], but only when it opens with a plural weekday
+/// ("fridays", "mondays and thursdays"), which reads as recurring.
+fn plural_list(scratch: &Scratch, words: &[(usize, usize)], j: usize) -> Option<(u8, usize)> {
+    let first = words.get(j).filter(|r| scratch.is_live(r.0, r.1))?;
+    let lead = scratch.word_lc(*first).split(',').next().unwrap_or("");
+    plural_weekday(lead)?;
+    weekday_list(scratch, words, j)
 }
 
 /// "mondays", "fridays"… — a plural weekday, which reads as recurring.
@@ -990,12 +1067,27 @@ fn pass_date(
             return;
         }
     }
+    // "every fri, sat and sun": the first of those days.
+    if let Some(first) = p.rec.as_deref().and_then(|r| first_rec_day(r, today)) {
+        p.due = Some(first);
+        return;
+    }
     if p.due.is_none()
         && let Some(wd) = weekday_hint
         && let Some(d) = next_weekday(today, wd, true)
     {
         p.due = Some(d);
     }
+}
+
+/// First day of a weekly rule on given weekdays (`+1w:fri,sat,sun`) after
+/// `today`; `None` for any other rule.
+pub fn first_rec_day(rec: &str, today: NaiveDate) -> Option<NaiveDate> {
+    let mask = crate::recurrence::parse_rec_spec(rec)?.days;
+    crate::recurrence::days_in(mask)
+        .into_iter()
+        .filter_map(|wd| next_weekday(today, wd, true))
+        .min()
 }
 
 /// Try every supported date phrase starting at `words[i]`. Returns the
@@ -1443,6 +1535,60 @@ fn next_lc<'a>(scratch: &'a Scratch, words: &[(usize, usize)], i: usize) -> Opti
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_few_weekdays() {
+        // 2026-10-03 is a Saturday.
+        let today = d("2026-10-03");
+        for (input, rec, due, body) in [
+            (
+                "llamar Ana every friday,saturday and sunday",
+                "+1w:fri,sat,sun",
+                "2026-10-04",
+                "llamar Ana",
+            ),
+            (
+                "gym every mon, wed and fri",
+                "+1w:mon,wed,fri",
+                "2026-10-05",
+                "gym",
+            ),
+            (
+                "gym every monday , wednesday",
+                "+1w:mon,wed",
+                "2026-10-05",
+                "gym",
+            ),
+            ("hike every weekend", "+1w:sat,sun", "2026-10-04", "hike"),
+            (
+                "swim mondays and thursdays",
+                "+1w:mon,thu",
+                "2026-10-05",
+                "swim",
+            ),
+            (
+                "run every week on tuesday and friday",
+                "+1w:tue,fri",
+                "2026-10-06",
+                "run",
+            ),
+            (
+                "standup every 2 weeks on mon,thu",
+                "+2w:mon,thu",
+                "2026-10-05",
+                "standup",
+            ),
+        ] {
+            let p = detect(input, today, &[]).parsed;
+            assert_eq!(p.rec.as_deref(), Some(rec), "{input}");
+            assert_eq!(p.due, Some(d(due)), "{input}");
+            assert_eq!(p.body.trim(), body, "{input}");
+        }
+        // A single day stays the plain weekly rule.
+        let p = detect("call mom every sunday and relax", today, &[]).parsed;
+        assert_eq!(p.rec.as_deref(), Some("+1w"));
+        assert!(p.body.contains("and relax"), "{p:?}");
+    }
 
     #[test]
     fn a_todo_txt_priority_counts_anywhere() {

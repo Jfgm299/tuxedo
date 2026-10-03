@@ -270,28 +270,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         " ADD TASK "
     };
-    // Live capture: the border takes the mode's colour, like the note
-    // editor's (green while typing, accent in Normal).
-    let border = if app.live_add_active() {
-        let palette = crate::ui::mode_colors::mode_palette(theme);
-        match app.draft.input_mode() {
-            crate::app::DialogInputMode::Insert => palette.insert,
-            crate::app::DialogInputMode::Normal => palette.normal,
-        }
+    let live = app.live_add_active();
+    // Live capture: a quiet accent border and no title, like a search box.
+    let border = if live {
+        tint(theme, theme.accent, 0.6)
     } else {
         theme.border
     };
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border).bg(theme.panel))
-        .title(Line::from(vec![Span::styled(
+        .style(Style::default().bg(theme.panel));
+    if !live {
+        block = block.title(Line::from(vec![Span::styled(
             title,
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
-        )]))
-        .style(Style::default().bg(theme.panel));
+        )]));
+    }
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -392,6 +390,26 @@ pub fn field_icon(kind: FieldKind, nerd: bool) -> &'static str {
     }
 }
 
+/// An icon followed by `gap` cells of space. Terminals such as Ghostty draw
+/// a Nerd Font icon that is followed by a space two cells wide, over that
+/// space; one more space keeps the gap after it.
+fn icon_gap(icon: &str, nerd: bool) -> String {
+    if nerd {
+        format!("{icon}  ")
+    } else {
+        format!("{icon} ")
+    }
+}
+
+/// An icon on its own, centred in a chip.
+fn icon_alone(icon: &str, nerd: bool) -> String {
+    if nerd {
+        format!(" {icon}  ")
+    } else {
+        format!("  {icon}  ")
+    }
+}
+
 pub fn field_color(kind: FieldKind, theme: &Theme) -> Color {
     match kind {
         FieldKind::Date => theme.due,
@@ -410,28 +428,28 @@ fn tint(theme: &Theme, color: Color, amount: f32) -> Color {
     crate::ui::mode_colors::blend(color, theme.panel, amount).unwrap_or(theme.cursor)
 }
 
-/// A pill: icon and text on a tinted background, in the field's colour.
-fn pill_style(theme: &Theme, kind: FieldKind) -> Style {
-    let color = field_color(kind, theme);
-    Style::default()
-        .fg(color)
-        .bg(tint(theme, color, 0.30))
-        .add_modifier(Modifier::BOLD)
+/// Tags (`+project`, `@context`) are drawn as filled pills; the other
+/// detected phrases as coloured text behind their icon.
+fn is_tag(kind: FieldKind) -> bool {
+    matches!(kind, FieldKind::Project | FieldKind::Context)
 }
 
-/// Half-block caps that round a pill's ends off: the pill's background
-/// colour drawn as a half cell on the panel.
-fn pill_caps(theme: &Theme, pill: Style) -> (Span<'static>, Span<'static>) {
-    let cap = Style::default()
-        .fg(pill.bg.unwrap_or(theme.cursor))
-        .bg(theme.panel);
-    (Span::styled("▐", cap), Span::styled("▌", cap))
+/// Rounded ends for a one-row pill: Powerline's half circles with a Nerd
+/// Font, a plain space of the pill's colour otherwise.
+fn pill_ends(theme: &Theme, bg: Color, nerd: bool) -> (Span<'static>, Span<'static>) {
+    if nerd {
+        let cap = Style::default().fg(bg).bg(theme.panel);
+        (Span::styled("\u{e0b6}", cap), Span::styled("\u{e0b4}", cap))
+    } else {
+        let pad = Style::default().bg(bg);
+        (Span::styled(" ", pad), Span::styled(" ", pad))
+    }
 }
 
 /// The input line of the live-capture dialog: plain text, each detected
-/// phrase drawn as a pill with its field's icon, then the picked values as
-/// pills after the text. Returns the spans and the cursor's display column
-/// (for horizontal scrolling).
+/// phrase coloured behind its icon (tags as filled pills), then the values
+/// chosen in a picker after the text. Returns the spans and the cursor's
+/// display column (for horizontal scrolling).
 fn live_input_spans(app: &App, theme: &Theme, show_cursor: bool) -> (Vec<Span<'static>>, usize) {
     let draft = app.draft.text();
     let cursor = app.draft.cursor().min(draft.len());
@@ -443,7 +461,7 @@ fn live_input_spans(app: &App, theme: &Theme, show_cursor: bool) -> (Vec<Span<'s
     let mut cursor_col = None;
     let width = |s: &str| unicode_width::UnicodeWidthStr::width(s);
 
-    // Text runs: (start, end, pill kind).
+    // Text runs: (start, end, detected kind).
     let mut runs: Vec<(usize, usize, Option<FieldKind>)> = Vec::new();
     let mut pos = 0;
     for s in &det.spans {
@@ -457,19 +475,24 @@ fn live_input_spans(app: &App, theme: &Theme, show_cursor: bool) -> (Vec<Span<'s
         runs.push((pos, draft.len(), None));
     }
     for (start, end, kind) in runs {
-        let style = kind.map_or(plain, |k| pill_style(theme, k));
-        if let Some(k) = kind {
-            let (cap, _) = pill_caps(theme, style);
-            out.push(cap);
-            // `+home` / `@bank` already carry their sigil; the Unicode icon
-            // would only repeat it.
-            let sigil = !nerd && matches!(k, FieldKind::Project | FieldKind::Context);
-            let icon = if sigil {
-                String::new()
-            } else {
-                format!("{} ", field_icon(k, nerd))
-            };
-            col += 1 + width(&icon);
+        let style = match kind {
+            None => plain,
+            Some(k) if is_tag(k) => {
+                let color = field_color(k, theme);
+                Style::default().fg(color).bg(tint(theme, color, 0.25))
+            }
+            Some(k) => Style::default().fg(field_color(k, theme)),
+        };
+        let ends = kind
+            .filter(|k| is_tag(*k))
+            .map(|_| pill_ends(theme, style.bg.unwrap_or(theme.panel), nerd));
+        if let Some((left, _)) = &ends {
+            out.push(left.clone());
+            col += 1;
+        }
+        if let Some(k) = kind.filter(|k| !is_tag(*k)) {
+            let icon = icon_gap(field_icon(k, nerd), nerd);
+            col += width(&icon);
             out.push(Span::styled(icon, style));
         }
         if show_cursor && cursor >= start && cursor < end {
@@ -497,35 +520,43 @@ fn live_input_spans(app: &App, theme: &Theme, show_cursor: bool) -> (Vec<Span<'s
             col += width(text);
             out.push(Span::styled(text.to_string(), style));
         }
-        if kind.is_some() {
-            out.push(pill_caps(theme, style).1);
+        if let Some((_, right)) = ends {
+            out.push(right);
             col += 1;
         }
     }
     if show_cursor && cursor == draft.len() {
         cursor_col = Some(col);
-        out.push(Span::styled("█", Style::default().fg(theme.fg)));
+        out.push(Span::styled("▏", Style::default().fg(theme.accent)));
         col += 1;
     }
     for (kind, value) in app.live_picked_pills() {
-        let style = pill_style(theme, kind);
-        let (left, right) = pill_caps(theme, style);
-        out.push(Span::styled(" ", plain));
-        out.push(left);
-        let label = format!("{} {value}", field_icon(kind, nerd));
-        col += 3 + width(&label);
+        let style = Style::default().fg(field_color(kind, theme));
+        let label = format!(" {}{value}", icon_gap(field_icon(kind, nerd), nerd));
+        col += width(&label);
         out.push(Span::styled(label, style));
-        out.push(right);
     }
     (out, cursor_col.unwrap_or(col))
 }
 
-/// The chip row: one rounded box per field — coloured and filled when the
-/// field is set, dimmed when empty, highlighted when focused with `Tab`.
+/// A one-row pill: `label` on `bg` between rounded ends. Returns its width.
+fn pill(frame: &mut Frame, x: u16, y: u16, label: Span<'static>, bg: Color, app: &App) -> u16 {
+    let (left, right) = pill_ends(app.theme(), bg, app.prefs.nerd_icons);
+    let w = unicode_width::UnicodeWidthStr::width(label.content.as_ref()) as u16 + 2;
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![left, label, right])),
+        Rect::new(x, y, w, 1),
+    );
+    w
+}
+
+/// The chip row: one filled, rounded pill per field — tinted in the field's
+/// colour when set, neutral when empty, brighter when focused with `Tab`.
 fn render_chips(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme();
     let focus = app.live_chip_focus();
     let nerd = app.prefs.nerd_icons;
+    let width = |s: &str| unicode_width::UnicodeWidthStr::width(s) as u16;
     let mut x = area.x;
     for (i, chip) in app.live_chips().into_iter().enumerate() {
         let color = match (chip.kind, chip.value.as_deref()) {
@@ -535,54 +566,69 @@ fn render_chips(frame: &mut Frame, area: Rect, app: &App) {
                 .map_or(theme.pri_a, |c| theme.priority_color(c)),
             _ => field_color(chip.kind, theme),
         };
+        let icon = field_icon(chip.kind, nerd);
         let label = match &chip.value {
-            Some(v) => format!("{} {v}", field_icon(chip.kind, nerd)),
-            None => field_icon(chip.kind, nerd).to_string(),
+            Some(v) => format!(" {}{v} ", icon_gap(icon, nerd)),
+            None => icon_alone(icon, nerd),
         };
-        let w = unicode_width::UnicodeWidthStr::width(label.as_str()) as u16 + 4;
+        let w = width(&label) + 2;
         if x + w > area.x + area.width {
             break;
         }
         let focused = focus == Some(i);
-        let (border, text, bg) = match (focused, chip.value.is_some()) {
-            (true, _) => (color, color, tint(theme, color, 0.45)),
-            (false, true) => (color, color, tint(theme, color, 0.22)),
-            (false, false) => (theme.dim, theme.dim, theme.panel),
+        let (fg, bg) = match (focused, chip.value.is_some()) {
+            (true, true) => (color, tint(theme, color, 0.42)),
+            (true, false) => (theme.fg, tint(theme, theme.fg, 0.28)),
+            (false, true) => (color, tint(theme, color, 0.22)),
+            (false, false) => (theme.dim, tint(theme, theme.fg, 0.09)),
         };
-        let mut text_style = Style::default().fg(text).bg(bg);
-        if chip.value.is_some() || focused {
-            text_style = text_style.add_modifier(Modifier::BOLD);
+        let mut style = Style::default().fg(fg).bg(bg);
+        if focused {
+            style = style.add_modifier(Modifier::BOLD);
         }
-        let rect = Rect::new(x, area.y, w, area.height.min(3));
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(border).bg(theme.panel))
-            .style(Style::default().bg(bg));
-        let inner = block.inner(rect);
-        frame.render_widget(block, rect);
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(format!(" {label} "), text_style)))
-                .style(Style::default().bg(bg)),
-            inner,
-        );
+        pill(frame, x, area.y, Span::styled(label, style), bg, app);
         x += w + 1;
     }
 }
 
-/// The live-capture variant of the add dialog: toast, input line with
-/// pills, chip boxes, key hints.
+/// The live-capture variant of the add dialog: toast, the input line with
+/// the add button at its right, and the chip boxes.
 fn render_live(frame: &mut Frame, inner: Rect, app: &App) {
     let theme = app.theme();
-    let [toast_area, input_area, _gap, chips_area, _gap2, hint_area] = Layout::vertical([
+    let nerd = app.prefs.nerd_icons;
+    let [top_area, input_area, _gap, chips_area, _pad] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(3),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .areas(inner);
+
+    // The add button, a filled pill at the right of the input.
+    let button_label = if nerd {
+        icon_alone("\u{f062}", true)
+    } else {
+        icon_alone("↑", false)
+    };
+    let button_w = unicode_width::UnicodeWidthStr::width(button_label.as_str()) as u16 + 2;
+    let button_x = (inner.x + inner.width).saturating_sub(button_w + 2);
+    let button_bg = tint(theme, theme.accent, 0.25);
+    pill(
+        frame,
+        button_x,
+        input_area.y,
+        Span::styled(
+            button_label,
+            Style::default()
+                .fg(theme.accent)
+                .bg(button_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        button_bg,
+        app,
+    );
+    let text_w = button_x.saturating_sub(inner.x + 1);
 
     if let Some(title) = app.live_toast() {
         let toast = Line::from(vec![
@@ -598,17 +644,24 @@ fn render_live(frame: &mut Frame, inner: Rect, app: &App) {
         ]);
         frame.render_widget(
             Paragraph::new(toast).style(Style::default().bg(theme.panel)),
-            toast_area,
+            Rect {
+                width: text_w,
+                ..top_area
+            },
         );
     }
 
     const PREFIX_W: u16 = 4;
+    let input_area = Rect {
+        width: text_w,
+        ..input_area
+    };
     let [prefix_area, content_area] =
         Layout::horizontal([Constraint::Length(PREFIX_W), Constraint::Min(0)]).areas(input_area);
     let prefix = Line::from(vec![
         Span::raw("  "),
         Span::styled(
-            "› ",
+            "> ",
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -638,25 +691,6 @@ fn render_live(frame: &mut Frame, inner: Rect, app: &App) {
         ..chips_area
     };
     render_chips(frame, chips_area, app);
-
-    frame.render_widget(
-        Paragraph::new(live_hint_line(app)).style(Style::default().bg(theme.panel)),
-        hint_area,
-    );
-}
-
-fn live_hint_line<'a>(app: &App) -> Line<'a> {
-    let theme = app.theme();
-    let keys = if app.live_chip_focus().is_some() {
-        "←/→ move · Enter pick · x reject · Esc back to text"
-    } else {
-        "Tab chips · Ctrl+Z undo detection · Enter add · Esc"
-    };
-    Line::from(vec![
-        Span::raw("  "),
-        Span::styled(keys, Style::default().fg(theme.dim)),
-    ])
-    .style(Style::default().bg(theme.panel))
 }
 
 fn preview_line<'a>(app: &App) -> Line<'a> {
@@ -1571,11 +1605,11 @@ mod tests {
     /// the popup floats — avoids matching against the sidebar / status bar
     /// content that contains the same project / context names.
     fn popup_region_text(buf: &Buffer) -> String {
-        // Mirror the dialog placement in `ui::draw`: 8 rows tall, centered.
-        // The popup begins at dlg.y + dlg.height and is up to 8 rows tall.
+        // Mirror the dialog placement in `ui::draw`: the live add dialog is 7
+        // rows tall, centered; the popup begins below it, up to 8 rows tall.
         let rows = buf.area.height;
         let cols = buf.area.width;
-        let dlg_h: u16 = 8;
+        let dlg_h: u16 = 7;
         let dlg_y = (rows.saturating_sub(dlg_h)) / 2;
         let popup_top = dlg_y + dlg_h;
         let popup_bottom = (popup_top + 8).min(rows);
@@ -1778,9 +1812,9 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| crate::ui::draw(f, &app)).unwrap();
         let buf = terminal.backend().buffer();
-        // The live dialog is 10 rows tall, centered in a 30-row area; input
+        // The live dialog is 7 rows tall, centered in a 30-row area; input
         // lives on the second inner row (top border + toast row + input).
-        let dlg_y = (30u16 - 10) / 2;
+        let dlg_y = (30u16 - 7) / 2;
         let input_y = dlg_y + 2;
         let mut row = String::new();
         for x in 0..80 {
@@ -1802,8 +1836,7 @@ mod tests {
         terminal.draw(|f| crate::ui::draw(f, &app)).unwrap();
         let text = dialog_inner_text(terminal.backend().buffer());
         assert!(text.contains("⚑ (A)"), "priority chip filled\n{text}");
-        assert!(text.contains("╭"), "chips are boxes\n{text}");
-        assert!(text.contains("Tab chips"), "live-capture hint\n{text}");
+        assert!(text.contains(" ⚑ (A) "), "priority chip is a pill\n{text}");
     }
 
     #[test]

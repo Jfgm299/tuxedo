@@ -55,9 +55,9 @@ the app, and **starred tasks** that stay at the top of their priority.
 - **Unsaved edits are protected**: Esc, `:q` and `Z` refuse to close a note
   with unsaved changes (`:w` to save, `:q!` to discard).
 - **Live capture**: the add dialog understands natural language *while you
-  type* — "call anna on friday at 6pm @calls every week" — drawing each
-  recognised phrase as a pill with its icon and filling a row of chip boxes
-  (date, time, repeat, project, context, priority). `Tab` walks the chips
+  type* — "call anna on friday at 6pm @calls every week" — marking each
+  recognised phrase with its icon (tags as rounded pills) and filling a row
+  of rounded chips (date, time, repeat, project, context, priority). `Tab` walks the chips
   (`x` rejects a wrong detection, `Enter` opens its picker; what you pick
   shows as a pill, never as a raw `due:` token), `Ctrl+Z` undoes the last
   detection, one `Enter` adds the task and keeps the dialog open for the next
@@ -114,7 +114,7 @@ the app, and **starred tasks** that stay at the top of their priority.
 | | `Z` | Close the pinned note, from anywhere |
 | | `Tab` / `Shift+Tab` | Switch between pinned notes (when more than one is pinned) |
 | Task list | `*` | Star / unstar the task: top of its priority group |
-| Add dialog (`n`) | type naturally | `tomorrow`, `on friday`, `at 6pm`, `every week`, `+project`, `@context`, `high priority` are detected live |
+| Add dialog (`n`) | type naturally | `tomorrow`, `on friday`, `at 6pm`, `every week`, `every fri, sat and sun`, `+project`, `@context`, `high priority` are detected live |
 | | `Tab` / `Shift+Tab` | Walk the chips; on a chip `x` rejects it, `Enter` opens its picker, `Esc` returns to the text |
 | | `Ctrl+Z` | Undo the newest detection (its words become plain text); on an empty dialog, undo the task just added |
 | | `Enter` | Add the task (converted to todo.txt) and stay open for the next one |
@@ -634,7 +634,9 @@ Standard [todo.txt](https://github.com/todotxt/todo.txt) lines:
   *strict* recurrence anchored to the previous due date (e.g.
   `rec:+1m` for monthly rent on the 15th); without it, the new due is
   computed from the completion date (e.g. `rec:1w` for "water plants
-  one week after I last did").
+  one week after I last did"). A weekly rule can name its weekdays:
+  `rec:+1w:fri,sat,sun` moves to the next of those days (typed as "every
+  friday, saturday and sunday"; `rec:+2w:mon,thu` every other week).
 
 Completed tasks are prefixed with `x ` and a completion date:
 
@@ -665,6 +667,7 @@ todo.txt — review or tweak it, then Enter again to save.
 | `Call mom every week starting Friday for project family` | `Call mom +family due:2026-05-15 rec:+1w` |
 | `Submit timesheet every other friday show 1 day before` | `Submit timesheet due:2026-05-15 rec:+2w t:-1d` |
 | `Daily standup high priority` | `(A) standup rec:+1d` |
+| `Gym every mon, wed and fri at 7am` | `Gym due:2026-05-13 rec:+1w:mon,wed,fri at:07:00` |
 | `Annual review April 15 +work @office` | `Annual review +work @office due:2027-04-15` |
 
 Recognized vocabulary:
