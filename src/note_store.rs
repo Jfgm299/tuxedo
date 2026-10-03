@@ -345,7 +345,7 @@ mod tests {
         // $EDITOR edits a temporary copy whose result is saved.
         edit_in::<io::Error>(&unlinked, |tmp| {
             assert!(tmp.is_file());
-            std::fs::write(tmp, "edited outside").map_err(Into::into)
+            std::fs::write(tmp, "edited outside")
         })
         .unwrap();
         assert_eq!(read(&unlinked).unwrap(), "edited outside");
