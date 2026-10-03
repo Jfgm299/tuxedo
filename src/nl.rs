@@ -556,9 +556,10 @@ fn pass_canonical(scratch: &mut Scratch, p: &mut ParsedNl) {
 // Time of day ("at 6pm", "at 18:30", "7am")
 // ---------------------------------------------------------------------------
 
-/// `at 6pm`, `at 6 pm`, `at 18:30`, `6:30pm`, `7am`, `noon`. A bare number
-/// needs `at` *and* am/pm or minutes ("at 7" alone is too ambiguous: a
-/// time, an address, a quantity…).
+/// `at 6pm`, `at 6 pm`, `at 18:30`, `6:30pm`, `7am`, `noon`, and a bare
+/// hour after `at`: `at 6` reads like a calendar app would — 1–6 is the
+/// afternoon (18:00), 7–11 the morning, 12 noon, 13–23 as written. The chip
+/// shows the guess, so a wrong one is visible and easy to fix.
 fn pass_time(scratch: &mut Scratch, p: &mut ParsedNl) {
     scratch.kind = Some(FieldKind::Time);
     if p.time.is_some() {
@@ -588,6 +589,8 @@ fn pass_time(scratch: &mut Scratch, p: &mut ParsedNl) {
             && let Some(t) = apply_meridiem(n, 0, suffix)
         {
             (t, 2)
+        } else if at && let Some(h) = w.parse::<u32>().ok().and_then(guess_hour) {
+            ((h, 0), 1)
         } else {
             continue;
         };
@@ -632,6 +635,16 @@ fn split_clock(s: &str) -> Option<(u32, u32)> {
         None => (s.parse().ok()?, 0),
     };
     (m < 60).then_some((h, m))
+}
+
+/// A bare hour after `at`: 1–6 → afternoon, 7–11 → morning, 12 → noon,
+/// 0 and 13–23 as written.
+fn guess_hour(h: u32) -> Option<u32> {
+    match h {
+        1..=6 => Some(h + 12),
+        0 | 7..=23 => Some(h),
+        _ => None,
+    }
 }
 
 fn apply_meridiem(h: u32, m: u32, suffix: &str) -> Option<(u32, u32)> {
@@ -807,9 +820,20 @@ fn pass_recurrence(scratch: &mut Scratch, p: &mut ParsedNl) -> Option<Weekday> {
             s
         } else if w == "every" || w == "each" {
             match parse_every_phrase(scratch, &words, i) {
-                Some(v) => v,
+                Some(v) => with_on_weekday(scratch, &words, i, v),
                 None => continue,
             }
+        } else if let Some(wd) = plural_weekday(w) {
+            // "fridays" on its own means every friday.
+            ("+1w".to_string(), 1, Some(wd))
+        } else if w == "on"
+            && let Some(wd) = words
+                .get(i + 1)
+                .filter(|r| scratch.is_live(r.0, r.1))
+                .and_then(|r| plural_weekday(scratch.word_lc(*r)))
+        {
+            // "on fridays".
+            ("+1w".to_string(), 2, Some(wd))
         } else {
             continue;
         };
@@ -892,6 +916,38 @@ fn parse_every_phrase(
         _ => return None,
     };
     Some((format!("+1{unit}"), 2, None))
+}
+
+/// Extend a weekly `every …` phrase with a trailing "on friday(s)":
+/// "every week on fridays", "every 2 weeks on monday".
+fn with_on_weekday(
+    scratch: &Scratch,
+    words: &[(usize, usize)],
+    i: usize,
+    (rec, count, wh): (String, usize, Option<Weekday>),
+) -> (String, usize, Option<Weekday>) {
+    if wh.is_some() || !rec.ends_with('w') {
+        return (rec, count, wh);
+    }
+    let at = i + count;
+    let live = |j: usize| words.get(j).is_some_and(|r| scratch.is_live(r.0, r.1));
+    if live(at) && live(at + 1) && scratch.word_lc(words[at]) == "on" {
+        let day = scratch.word_lc(words[at + 1]);
+        if let Some(wd) = parse_weekday(day).or_else(|| plural_weekday(day)) {
+            return (rec, count + 2, Some(wd));
+        }
+    }
+    (rec, count, wh)
+}
+
+/// "mondays", "fridays"… — a plural weekday, which reads as recurring.
+fn plural_weekday(s: &str) -> Option<Weekday> {
+    let singular = s.strip_suffix('s')?;
+    // Full names only: "sats"/"suns" are not weekdays.
+    if singular.len() < 6 {
+        return None;
+    }
+    parse_weekday(singular)
 }
 
 fn parse_weekday(s: &str) -> Option<Weekday> {
@@ -1783,7 +1839,11 @@ mod tests {
             ("meet at noon", Some((12, 0))),
             ("buy 7am coffee beans", Some((7, 0))),
             ("score 18:30 written down", None),
-            ("meet at 7", None),
+            ("meet at 7", Some((7, 0))),
+            ("call ana at 6", Some((18, 0))),
+            ("review at 12", Some((12, 0))),
+            ("deploy at 23", Some((23, 0))),
+            ("meet at 99", None),
             ("meet at home", None),
             ("table for 12pmx", None),
         ] {
@@ -1796,5 +1856,34 @@ mod tests {
         let det = detect("buy milk", d("2026-09-21"), &[]);
         assert!(det.is_empty());
         assert_eq!(det.to_todo_txt(), "buy milk");
+    }
+
+    #[test]
+    fn weekly_on_a_weekday_and_plural_weekdays() {
+        let today = d("2026-10-03"); // a Saturday
+        for text in [
+            "call ana every week on fridays",
+            "call ana every week on friday",
+            "call ana on fridays",
+            "call ana fridays",
+        ] {
+            let det = detect(text, today, &[]);
+            assert_eq!(det.parsed.rec.as_deref(), Some("+1w"), "{text}");
+            assert_eq!(det.parsed.due, Some(d("2026-10-09")), "next friday: {text}");
+            assert_eq!(det.parsed.body, "call ana", "{text}");
+        }
+        let det = detect("water plants every 2 weeks on monday", today, &[]);
+        assert_eq!(det.parsed.rec.as_deref(), Some("+2w"));
+        assert_eq!(det.parsed.due, Some(d("2026-10-05")));
+    }
+
+    #[test]
+    fn the_reported_example() {
+        // "at 6" is a time, "every week on fridays" a weekly repeat.
+        let det = detect("call ana at 6 every week on fridays", d("2026-10-03"), &[]);
+        assert_eq!(det.parsed.time, Some((18, 0)));
+        assert_eq!(det.parsed.rec.as_deref(), Some("+1w"));
+        assert_eq!(det.parsed.due, Some(d("2026-10-09")));
+        assert_eq!(det.parsed.body, "call ana");
     }
 }
