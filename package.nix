@@ -32,8 +32,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   meta = {
     description = "Fast, keyboard-driven terminal UI for todo.txt";
-    homepage = "https://github.com/Jfgm299/tasq";
-    changelog = "https://github.com/Jfgm299/tasq/releases/tag/${finalAttrs.src.tag}";
+    homepage = "https://github.com/tasq-app/tasq";
+    changelog = "https://github.com/tasq-app/tasq/releases/tag/${finalAttrs.src.tag}";
     license = lib.licenses.mit;
     mainProgram = "tasq";
   };

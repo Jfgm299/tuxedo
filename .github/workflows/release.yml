@@ -133,14 +133,14 @@ jobs:
     name: Update Homebrew tap
     needs: release
     runs-on: ubuntu-latest
-    # Touches only Jfgm299/homebrew-tap, authenticated with HOMEBREW_TAP_TOKEN.
+    # Touches only tasq-app/homebrew-tap, authenticated with HOMEBREW_TAP_TOKEN.
     # GITHUB_TOKEN needs no scopes at all here.
     permissions: {}
     steps:
       - name: Checkout tap
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: Jfgm299/homebrew-tap
+          repository: tasq-app/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
 
@@ -152,7 +152,7 @@ jobs:
           version="${TAG#v}"
           fetch_sha() {
             curl -fsSL \
-              "https://github.com/Jfgm299/tasq/releases/download/${TAG}/tasq-${TAG}-$1.tar.gz.sha256" \
+              "https://github.com/tasq-app/tasq/releases/download/${TAG}/tasq-${TAG}-$1.tar.gz.sha256" \
               | awk '{print $1}'
           }
           sha_darwin_arm=$(fetch_sha aarch64-apple-darwin)
@@ -163,28 +163,28 @@ jobs:
           cat > tap/Formula/tasq.rb <<EOF
           class Tasq < Formula
             desc "Fast, keyboard-driven terminal UI for todo.txt"
-            homepage "https://github.com/Jfgm299/tasq"
+            homepage "https://github.com/tasq-app/tasq"
             version "${version}"
             license "MIT"
 
             on_macos do
               on_arm do
-                url "https://github.com/Jfgm299/tasq/releases/download/v#{version}/tasq-v#{version}-aarch64-apple-darwin.tar.gz"
+                url "https://github.com/tasq-app/tasq/releases/download/v#{version}/tasq-v#{version}-aarch64-apple-darwin.tar.gz"
                 sha256 "${sha_darwin_arm}"
               end
               on_intel do
-                url "https://github.com/Jfgm299/tasq/releases/download/v#{version}/tasq-v#{version}-x86_64-apple-darwin.tar.gz"
+                url "https://github.com/tasq-app/tasq/releases/download/v#{version}/tasq-v#{version}-x86_64-apple-darwin.tar.gz"
                 sha256 "${sha_darwin_intel}"
               end
             end
 
             on_linux do
               on_arm do
-                url "https://github.com/Jfgm299/tasq/releases/download/v#{version}/tasq-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/tasq-app/tasq/releases/download/v#{version}/tasq-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
                 sha256 "${sha_linux_arm}"
               end
               on_intel do
-                url "https://github.com/Jfgm299/tasq/releases/download/v#{version}/tasq-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/tasq-app/tasq/releases/download/v#{version}/tasq-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
                 sha256 "${sha_linux_intel}"
               end
             end

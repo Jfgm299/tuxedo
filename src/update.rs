@@ -51,26 +51,26 @@ pub fn run() -> io::Result<()> {
         InstallKind::Homebrew => {
             println!("Looks like a Homebrew install. Update with:");
             println!();
-            println!("    brew update && brew upgrade jfgm299/tap/tasq");
+            println!("    brew update && brew upgrade tasq-app/tap/tasq");
         }
         InstallKind::Cargo => {
             println!("Looks like a `cargo install` build. Update with:");
             println!();
-            println!("    cargo install --git https://github.com/Jfgm299/tasq --force");
+            println!("    cargo install --git https://github.com/tasq-app/tasq --force");
         }
         InstallKind::Binary => {
             println!("Looks like a downloaded binary. Grab the latest from:");
             println!();
-            println!("    https://github.com/Jfgm299/tasq/releases/latest");
+            println!("    https://github.com/tasq-app/tasq/releases/latest");
             println!();
             println!("...and replace the file above.");
         }
         InstallKind::Unknown => {
             println!("Could not detect the install method. Options:");
             println!();
-            println!("    brew upgrade jfgm299/tap/tasq");
-            println!("    cargo install --git https://github.com/Jfgm299/tasq --force");
-            println!("    https://github.com/Jfgm299/tasq/releases/latest");
+            println!("    brew upgrade tasq-app/tap/tasq");
+            println!("    cargo install --git https://github.com/tasq-app/tasq --force");
+            println!("    https://github.com/tasq-app/tasq/releases/latest");
         }
     }
     Ok(())
@@ -118,7 +118,7 @@ const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 /// (which is what burned us once during testing).
 const NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(60 * 60);
 const CURL_TIMEOUT_SECS: u64 = 5;
-const RELEASE_URL: &str = "https://api.github.com/repos/Jfgm299/tasq/releases/latest";
+const RELEASE_URL: &str = "https://api.github.com/repos/tasq-app/tasq/releases/latest";
 
 fn check_for_update() -> Option<String> {
     let cache_path = cache_path();

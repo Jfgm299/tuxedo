@@ -9,7 +9,7 @@ a local database that stays yours — with todo.txt in and out whenever you
 want it. See [`DESIGN.md`](DESIGN.md) for where it's going.
 
 ```sh
-git clone https://github.com/Jfgm299/tasq && cd tasq && ./install.sh
+git clone https://github.com/tasq-app/tasq && cd tasq && ./install.sh
 ```
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
@@ -212,7 +212,7 @@ picker in sorted filename order. Ready-made themes live in
 ```sh
 mkdir -p ~/.config/tasq/themes
 curl -o ~/.config/tasq/themes/gruvbox-dark-soft.toml \
-  https://raw.githubusercontent.com/Jfgm299/tasq/main/docs/themes/gruvbox-dark-soft.toml
+  https://raw.githubusercontent.com/tasq-app/tasq/main/docs/themes/gruvbox-dark-soft.toml
 ```
 
 <details>
@@ -264,7 +264,7 @@ another theme is skipped with a warning at startup.
 From source (a Homebrew tap is planned):
 
 ```sh
-git clone https://github.com/Jfgm299/tasq
+git clone https://github.com/tasq-app/tasq
 cd tasq
 ./install.sh        # or: cargo build --release && ./target/release/tasq
 ```
