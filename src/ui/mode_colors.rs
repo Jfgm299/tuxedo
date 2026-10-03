@@ -123,6 +123,18 @@ pub fn mode_palette(theme: &Theme) -> ModePalette {
     }
 }
 
+/// Mix `fg` into `bg` by `t` (0 = `bg`, 1 = `fg`), for tinted backgrounds
+/// of pills and chips. `None` when `bg` is the terminal's own background
+/// (`Reset`), whose colour can't be known.
+pub fn blend(fg: Color, bg: Color, t: f32) -> Option<Color> {
+    if bg == Color::Reset {
+        return None;
+    }
+    let (a, b) = (rgb(fg), rgb(bg));
+    let mix = |x: u8, y: u8| (f32::from(y) + (f32::from(x) - f32::from(y)) * t).round() as u8;
+    Some(Color::Rgb(mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2)))
+}
+
 /// Smallest angle between two hues, in degrees (0..=180).
 fn hue_gap(a: f32, b: f32) -> f32 {
     let d = (a - b).abs() % 360.0;

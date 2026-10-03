@@ -54,6 +54,10 @@ pub struct Config {
     /// dialog a single plain text field — `rec:` is typed by hand. Defaults
     /// to `true`. Serialized as `recurrence_builder = false`.
     pub recurrence_builder: Option<bool>,
+    /// Icon set: `nerd` uses Nerd Font glyphs (needs a Nerd Font in the
+    /// terminal, e.g. JetBrainsMono Nerd Font); anything else, or unset,
+    /// plain Unicode. Serialized as `icons = nerd`.
+    pub icons: Option<String>,
 }
 
 impl Config {
@@ -175,6 +179,7 @@ fn parse(s: &str) -> Config {
             }
             "week_start" => c.week_start = v.parse().ok(),
             "recurrence_builder" => c.recurrence_builder = parse_bool(v),
+            "icons" => c.icons = Some(v.trim().to_ascii_lowercase()),
             // Saved searches: `filter.<name> = <query>`. The name is the
             // (trimmed) text after the `filter.` prefix; the query is the
             // (unquoted) value, which may itself contain `=`. A repeated
@@ -247,6 +252,9 @@ fn serialize(c: &Config) -> String {
     if let Some(v) = c.recurrence_builder {
         let _ = writeln!(out, "recurrence_builder = {v}");
     }
+    if let Some(v) = &c.icons {
+        let _ = writeln!(out, "icons = {v}");
+    }
     out
 }
 
@@ -293,6 +301,7 @@ mod tests {
             hidden_keys: vec!["uid".into(), "sync".into()],
             week_start: Some(WeekStart::Sunday),
             recurrence_builder: Some(false),
+            icons: Some("nerd".to_string()),
         };
 
         let s = serialize(&c);
@@ -450,6 +459,7 @@ mod tests {
             hidden_keys: vec!["uid".into()],
             week_start: Some(WeekStart::Sunday),
             recurrence_builder: Some(false),
+            icons: Some("nerd".to_string()),
         };
         written.save_to(&path).expect("save should succeed");
         assert!(path.exists());

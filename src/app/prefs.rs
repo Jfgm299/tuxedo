@@ -43,6 +43,8 @@ pub struct Prefs {
     /// for `rec:` / `/rec`. Config-only (no in-app toggle); see
     /// `Config::recurrence_builder`.
     pub recurrence_builder: bool,
+    /// Nerd Font icons instead of plain Unicode (`icons = nerd`).
+    pub nerd_icons: bool,
 }
 
 impl Prefs {
@@ -67,6 +69,7 @@ impl Prefs {
             hidden_keys: cfg.hidden_keys,
             week_start: cfg.week_start.unwrap_or(WeekStart::Sunday),
             recurrence_builder: cfg.recurrence_builder.unwrap_or(true),
+            nerd_icons: cfg.icons.as_deref() == Some("nerd"),
         }
     }
 

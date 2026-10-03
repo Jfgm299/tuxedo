@@ -13,14 +13,15 @@ expression: buffer_to_text(&buf)
    +personal         1      5   (B) Draft hiring rubric for senior RAW                              
    +travel           1     (2)  PRIORITY C  ──────────────────────                                  
                             6   (C) Pay quarterly estimated taxes  (A) 2026-05-01 Finish Q2 board   
- CONTEXTS                   7   (C) Order new running shoes +healt deck +work @laptop               
-   @errand╭ ADD TASK ────────────────────────────────────────────────────────────────────╮          
-   @home  │                                                                              │          
-   @laptop│  › Schedule team offsite +work @phone /█                                     │          
-   @phone │   ▦   ◷   ↻   + work   @ phone   ▲                                           │          
+ CONTEXTS ╭ ADD TASK ────────────────────────────────────────────────────────────────────╮          
+   @errand│                                                                              │          
+   @home  │  › Schedule team offsite ▐+work▌ ▐@phone▌ /█                                 │          
+   @laptop│                                                                              │          
+   @phone │  ╭───╮ ╭───╮ ╭───╮ ╭────────╮ ╭─────────╮ ╭───╮                              │          
+          │  │ ▦ │ │ ◷ │ │ ↻ │ │ + work │ │ @ phone │ │ ⚑ │                              │          
+          │  ╰───╯ ╰───╯ ╰───╯ ╰────────╯ ╰─────────╯ ╰───╯                              │          
           │                                                                              │          
           │  Tab chips · Ctrl+Z undo detection · Enter add · Esc                         │          
-          │                                                                              │          
           ╰──────────────────────────────────────────────────────────────────────────────╯          
               ╭──────────────────────────────────────────────────────────╮                          
               │ ATTACH METADATA                                          │                          
@@ -32,5 +33,4 @@ expression: buffer_to_text(&buf)
               │  @ Context   tool, place or person                  /ctx │                          
               │                                                          │                          
               │  ↑↓ pick · Enter insert · Esc dismiss · type to filter   │                          
-              ╰──────────────────────────────────────────────────────────╯                          
- INSERT   type naturally: tomorrow, at 6pm, every week, +proj15 open · 2026-05-06 · tuxedo 2026.8.1
+ INSERT   type╰──────────────────────────────────────────────────────────╯6-05-06 · tuxedo 2026.8.1

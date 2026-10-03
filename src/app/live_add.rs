@@ -1,9 +1,14 @@
 //! Live capture in the add dialog: natural language detected while typing.
 //!
 //! Every keystroke re-runs [`nl::detect`] over the draft. Recognised phrases
-//! are coloured in place (rendering in `ui/dialog.rs`) and fill a row of
-//! chips — one per field, empty ones dimmed as a hint. The text itself stays
-//! as typed; it is converted to todo.txt only when saved.
+//! are drawn as pills in place (rendering in `ui/dialog.rs`) and fill a row
+//! of chips — one per field, empty ones dimmed as a hint. The text itself
+//! stays as typed; it is converted to todo.txt only when saved.
+//!
+//! Values chosen in a picker are kept *out* of the text, in [`Picked`], and
+//! drawn as pills after it — the dialog never shows raw `due:2026-10-04`
+//! tokens. Tokens typed by hand (`due:`, `t:`, `rec:`, `at:`, a leading
+//! `(A)`) are absorbed the same way once complete.
 //!
 //! Keys (wired in `main.rs`): `Tab` moves onto the chips, then `x` rejects a
 //! wrong detection (its words become plain text again) and `Enter` opens
@@ -14,7 +19,7 @@
 use chrono::NaiveDate;
 
 use super::App;
-use super::draft_overlay::CalendarTarget;
+use super::draft_overlay::{CalendarTarget, DraftOverlay};
 use super::types::AddOutcome;
 use crate::core::AddOutcome as CoreAdd;
 use crate::nl::{self, DetectedSpan, Detection, FieldKind};
@@ -30,14 +35,66 @@ pub const CHIP_ORDER: [FieldKind; 7] = [
     FieldKind::ShowFrom,
 ];
 
-/// One chip: its field and, when detected, the value to show and the phrase
-/// it came from.
+/// One chip: its field and, when set, the value to show and where it came
+/// from — a phrase in the text (`span`) or a picker (`picked`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chip {
     pub kind: FieldKind,
     pub value: Option<String>,
     pub span: Option<DetectedSpan>,
+    pub picked: bool,
 }
+
+/// Field values set outside the text: by a picker, or absorbed from a
+/// canonical token. They override what the text says.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Picked {
+    pub due: Option<NaiveDate>,
+    pub threshold: Option<String>,
+    pub rec: Option<String>,
+    pub time: Option<(u32, u32)>,
+    pub priority: Option<char>,
+}
+
+impl Picked {
+    fn has(&self, kind: FieldKind) -> bool {
+        match kind {
+            FieldKind::Date => self.due.is_some(),
+            FieldKind::ShowFrom => self.threshold.is_some(),
+            FieldKind::Repeat => self.rec.is_some(),
+            FieldKind::Time => self.time.is_some(),
+            FieldKind::Priority => self.priority.is_some(),
+            FieldKind::Project | FieldKind::Context => false,
+        }
+    }
+
+    fn clear(&mut self, kind: FieldKind) {
+        match kind {
+            FieldKind::Date => self.due = None,
+            FieldKind::ShowFrom => self.threshold = None,
+            FieldKind::Repeat => self.rec = None,
+            FieldKind::Time => self.time = None,
+            FieldKind::Priority => self.priority = None,
+            FieldKind::Project | FieldKind::Context => {}
+        }
+    }
+
+    /// Copy the field `kind` from a parse result.
+    fn take_from(&mut self, kind: FieldKind, p: &nl::ParsedNl) {
+        match kind {
+            FieldKind::Date => self.due = p.due,
+            FieldKind::ShowFrom => self.threshold = p.threshold.clone(),
+            FieldKind::Repeat => self.rec = p.rec.clone(),
+            FieldKind::Time => self.time = p.time,
+            FieldKind::Priority => self.priority = p.priority,
+            FieldKind::Project | FieldKind::Context => {}
+        }
+    }
+}
+
+/// How a picked value is recorded in `LiveState::seen`, so `Ctrl+Z` can
+/// undo it too.
+const PICKED_MARK: &str = "\u{0}picked";
 
 impl App {
     fn today_date(&self) -> Option<NaiveDate> {
@@ -50,12 +107,40 @@ impl App {
         self.selection.editing().is_none()
     }
 
-    /// The live detection over the current draft.
+    /// The live detection over the current draft, with picked values
+    /// layered on top.
     pub fn live_detection(&self) -> Detection {
-        match self.today_date() {
-            Some(today) => nl::detect(self.draft.text(), today, &self.draft.live.rejected),
-            None => Detection::default(),
+        let Some(today) = self.today_date() else {
+            return Detection::default();
+        };
+        let mut det = nl::detect(self.draft.text(), today, &self.draft.live.rejected);
+        let picked = &self.draft.live.picked;
+        let p = &mut det.parsed;
+        if picked.due.is_some() {
+            p.due = picked.due;
         }
+        if picked.threshold.is_some() {
+            p.threshold = picked.threshold.clone();
+        }
+        if picked.rec.is_some() {
+            p.rec = picked.rec.clone();
+        }
+        if picked.time.is_some() {
+            p.time = picked.time;
+        }
+        if picked.priority.is_some() {
+            p.priority = picked.priority;
+        }
+        det
+    }
+
+    /// The picked values, in chip order, as pills to draw after the text.
+    pub fn live_picked_pills(&self) -> Vec<(FieldKind, String)> {
+        self.live_chips()
+            .into_iter()
+            .filter(|c| c.picked)
+            .filter_map(|c| Some((c.kind, c.value?)))
+            .collect()
     }
 
     /// The chip row for the current draft.
@@ -80,9 +165,15 @@ impl App {
                 if kind == FieldKind::ShowFrom && value.is_none() {
                     return None;
                 }
+                let picked = self.draft.live.picked.has(kind);
                 Some(Chip {
                     kind,
-                    span: value.as_ref().and_then(|_| span_of(kind)),
+                    span: if picked {
+                        None
+                    } else {
+                        value.as_ref().and_then(|_| span_of(kind))
+                    },
+                    picked,
                     value,
                 })
             })
@@ -100,7 +191,9 @@ impl App {
             .map(|s| (s.kind, text[s.start..s.end].to_lowercase()))
             .collect();
         let live = &mut self.draft.live;
-        live.seen.retain(|d| current.contains(d));
+        let picked = live.picked.clone();
+        live.seen
+            .retain(|d| current.contains(d) || (d.1 == PICKED_MARK && picked.has(d.0)));
         for d in current {
             if !live.seen.contains(&d) {
                 live.seen.push(d);
@@ -119,7 +212,11 @@ impl App {
     /// whether anything happened.
     pub fn live_undo(&mut self) -> bool {
         if let Some(last) = self.draft.live.seen.pop() {
-            self.draft.live.rejected.push(last);
+            if last.1 == PICKED_MARK {
+                self.draft.live.picked.clear(last.0);
+            } else {
+                self.draft.live.rejected.push(last);
+            }
             self.live_refresh();
             return true;
         }
@@ -168,6 +265,11 @@ impl App {
         let Some(chip) = self.focused_chip() else {
             return;
         };
+        if chip.picked {
+            self.draft.live.picked.clear(chip.kind);
+            self.live_refresh();
+            return;
+        }
         let Some(span) = chip.span else {
             return;
         };
@@ -176,46 +278,138 @@ impl App {
         self.live_refresh();
     }
 
-    /// `Enter` on a chip: open that field's picker. A detected phrase is
-    /// first replaced by its canonical token, so the picker starts from the
-    /// detected value and writes back over it. Project, context and time
-    /// have no picker: the matching sigil (or `at `) is typed and focus goes
-    /// back to the text, where autocomplete takes over.
+    /// `Enter` on a chip: open that field's picker, starting from the
+    /// current value. A phrase that set the field moves out of the text into
+    /// [`Picked`] first, so whatever the picker does — accept or cancel —
+    /// the text never ends up with a raw token in it. Project, context and
+    /// time have no picker: the matching sigil (or `at `) is typed and focus
+    /// goes back to the text, where autocomplete takes over.
     pub fn live_open_focused(&mut self) {
         let Some(chip) = self.focused_chip() else {
             return;
         };
         self.draft.live.chip_focus = None;
-        let det = self.live_detection();
-        let p = det.parsed.clone();
-        if let Some(span) = chip.span {
-            let canonical = match chip.kind {
-                FieldKind::Date => p.due.map(|d| format!("due:{}", d.format("%Y-%m-%d"))),
-                FieldKind::ShowFrom => p.threshold.map(|t| format!("t:{t}")),
-                FieldKind::Repeat => p.rec.map(|r| format!("rec:{r}")),
-                // The priority picker writes the `(X)` prefix itself.
-                FieldKind::Priority => Some(String::new()),
-                _ => None,
-            };
-            if let Some(token) = canonical {
-                let text = self.draft.text();
-                let is_token = text[span.start..span.end].contains(':')
-                    || (chip.kind == FieldKind::Priority && span.start == 0);
-                if !is_token {
-                    self.draft.replace_token(span.start, span.end, &token);
+        let has_picker = matches!(
+            chip.kind,
+            FieldKind::Date | FieldKind::ShowFrom | FieldKind::Repeat | FieldKind::Priority
+        );
+        if has_picker && let Some(span) = chip.span {
+            let det = self.live_detection();
+            self.draft.live.picked.take_from(chip.kind, &det.parsed);
+            self.draft.remove_range(span.start, span.end);
+            self.draft
+                .live
+                .seen
+                .push((chip.kind, PICKED_MARK.to_string()));
+        }
+        let picked = self.draft.live.picked.clone();
+        match chip.kind {
+            FieldKind::Date | FieldKind::ShowFrom => {
+                let target = if chip.kind == FieldKind::Date {
+                    CalendarTarget::Due
+                } else {
+                    CalendarTarget::Threshold
+                };
+                self.open_calendar(target);
+                let start = if chip.kind == FieldKind::Date {
+                    picked.due
+                } else {
+                    picked
+                        .threshold
+                        .as_deref()
+                        .and_then(|t| NaiveDate::parse_from_str(t, "%Y-%m-%d").ok())
+                };
+                if let Some(d) = start
+                    && let Some(DraftOverlay::Calendar(state)) = self.draft.overlay_mut()
+                {
+                    state.focused = d;
                 }
             }
-        }
-        match chip.kind {
-            FieldKind::Date => self.open_calendar(CalendarTarget::Due),
-            FieldKind::ShowFrom => self.open_calendar(CalendarTarget::Threshold),
-            FieldKind::Repeat => self.open_recurrence_builder(),
-            FieldKind::Priority => self.open_priority_chooser(),
+            FieldKind::Repeat => {
+                self.open_recurrence_builder();
+                if let Some(spec) = picked
+                    .rec
+                    .as_deref()
+                    .and_then(crate::recurrence::parse_rec_spec)
+                    && let Some(DraftOverlay::RecurrenceBuilder(state)) = self.draft.overlay_mut()
+                {
+                    state.interval = spec.n.max(1);
+                    state.unit = spec.unit;
+                    state.strict = spec.strict;
+                }
+            }
+            FieldKind::Priority => {
+                self.open_priority_chooser();
+                if let Some(c) = picked.priority
+                    && let Some(DraftOverlay::PriorityChooser(state)) = self.draft.overlay_mut()
+                {
+                    state.selected = match c {
+                        'A' => 0,
+                        'B' => 1,
+                        _ => 2,
+                    };
+                }
+            }
             FieldKind::Project => self.live_append(" +"),
             FieldKind::Context => self.live_append(" @"),
             FieldKind::Time => self.live_append(" at "),
         }
         self.live_refresh();
+    }
+
+    /// Move complete `due:` / `t:` / `rec:` / `at:` tokens and a leading
+    /// `(A)` out of the text into [`Picked`] — pickers write them, and they
+    /// can be typed by hand. A token the cursor is still at the end of is
+    /// left alone unless `force` (right after a picker closes), so typing
+    /// `at:18:00` isn't absorbed at `at:18:0`.
+    pub fn live_absorb(&mut self, force: bool) {
+        let Some(today) = self.today_date() else {
+            return;
+        };
+        loop {
+            let text = self.draft.text().to_string();
+            let cursor = self.draft.cursor();
+            let mut found = None;
+            let mut start = None;
+            for (i, c) in text
+                .char_indices()
+                .chain(std::iter::once((text.len(), ' ')))
+            {
+                match (c.is_whitespace(), start) {
+                    (false, None) => start = Some(i),
+                    (true, Some(s)) => {
+                        start = None;
+                        let still_typing = !force && i == text.len() && cursor == i;
+                        if still_typing {
+                            continue;
+                        }
+                        let token = &text[s..i];
+                        let det = nl::detect(token, today, &[]);
+                        let whole = det.spans.len() == 1
+                            && det.spans[0].start == 0
+                            && det.spans[0].end == token.len();
+                        let canonical = token.contains(':')
+                            || (s == 0 && token.len() == 3 && token.starts_with('('));
+                        if whole && canonical {
+                            let kind = det.spans[0].kind;
+                            if !matches!(kind, FieldKind::Project | FieldKind::Context) {
+                                found = Some((s, i, kind, det.parsed));
+                                break;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some((s, e, kind, parsed)) = found else {
+                break;
+            };
+            self.draft.live.picked.take_from(kind, &parsed);
+            self.draft.remove_range(s, e);
+            let mark = (kind, PICKED_MARK.to_string());
+            self.draft.live.seen.retain(|d| *d != mark);
+            self.draft.live.seen.push(mark);
+        }
     }
 
     /// Append `s` at the end of the draft (dropping a doubled space) and
@@ -240,7 +434,8 @@ impl App {
             return AddOutcome::Empty;
         }
         let det = self.live_detection();
-        let (line, title) = if det.is_empty() {
+        let nothing_set = det.is_empty() && self.draft.live.picked == Picked::default();
+        let (line, title) = if nothing_set {
             (text.clone(), text.clone())
         } else {
             if det.parsed.body.trim().is_empty() {
@@ -397,8 +592,50 @@ mod tests {
         typed(&mut app, "dentist tomorrow");
         app.live_focus_chips();
         app.live_open_focused();
-        assert!(app.draft.text().contains("due:"), "{}", app.draft.text());
-        assert!(app.calendar_state().is_some());
+        assert_eq!(app.draft.text(), "dentist", "the phrase became a pill");
+        let cal = app.calendar_state().expect("calendar open");
+        assert_eq!(
+            cal.focused,
+            app.today_date()
+                .expect("today")
+                .succ_opt()
+                .expect("tomorrow")
+        );
+        assert!(chip(&app, FieldKind::Date).picked);
+    }
+
+    #[test]
+    fn a_picker_result_becomes_a_pill_not_a_token() {
+        let mut app = build_app("");
+        typed(&mut app, "dentist");
+        // What a picker writes into the text…
+        app.apply_kv("due", Some("2026-10-04"));
+        app.live_absorb(true);
+        // …is moved out of it.
+        assert_eq!(app.draft.text(), "dentist");
+        let date = chip(&app, FieldKind::Date);
+        assert!(date.picked);
+        assert_eq!(date.value.as_deref(), Some("sun 4 oct"));
+        assert_eq!(app.live_picked_pills().len(), 1);
+
+        assert_eq!(app.live_add(), AddOutcome::Saved);
+        let raw = &app.tasks().last().expect("added").raw;
+        assert!(raw.ends_with("dentist due:2026-10-04"), "{raw}");
+    }
+
+    #[test]
+    fn typed_tokens_are_absorbed_only_once_complete() {
+        let mut app = build_app("");
+        typed(&mut app, "call at:18:0");
+        app.live_absorb(false);
+        assert_eq!(app.draft.text(), "call at:18:0", "still typing");
+        typed(&mut app, "0 ");
+        app.live_absorb(false);
+        assert_eq!(app.draft.text(), "call ");
+        assert_eq!(chip(&app, FieldKind::Time).value.as_deref(), Some("18:00"));
+        // Ctrl+Z undoes the absorbed value too.
+        assert!(app.live_undo());
+        assert!(chip(&app, FieldKind::Time).value.is_none());
     }
 
     #[test]

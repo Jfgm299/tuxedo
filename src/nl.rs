@@ -1396,6 +1396,13 @@ fn pass_priority(scratch: &mut Scratch, p: &mut ParsedNl) {
         if !scratch.is_live(words[i].0, words[i].1) {
             continue;
         }
+        // A todo.txt `(A)` typed anywhere, not just in front.
+        let raw = &scratch.text.as_bytes()[words[i].0..words[i].1];
+        if raw.len() == 3 && raw[0] == b'(' && raw[1].is_ascii_uppercase() && raw[2] == b')' {
+            scratch.mark(words[i].0, words[i].1);
+            p.priority = Some(raw[1] as char);
+            return;
+        }
         let w = scratch.word_lc(words[i]);
         let prio = match w {
             "high" | "highest" if next_lc(scratch, &words, i + 1) == Some("priority") => {
@@ -1436,6 +1443,16 @@ fn next_lc<'a>(scratch: &'a Scratch, words: &[(usize, usize)], i: usize) -> Opti
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_todo_txt_priority_counts_anywhere() {
+        let p = detect("pay rent tomorrow (A)", d("2026-10-03"), &[]).parsed;
+        assert_eq!(p.priority, Some('A'));
+        assert!(!p.body.contains("(A)"), "{p:?}");
+        // Lower case stays text: "(a)" is how prose numbers options.
+        let p = detect("pick option (a)", d("2026-10-03"), &[]).parsed;
+        assert_eq!(p.priority, None);
+    }
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()

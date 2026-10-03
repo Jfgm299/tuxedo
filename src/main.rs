@@ -1103,10 +1103,14 @@ fn handle_insert_normal(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_insert(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) {
+    let overlay_was_open = app.draft.overlay().is_some();
     handle_insert_inner(app, key, keybinds);
     // Live capture re-reads the draft after every key, whatever changed it
-    // (typing, a picker writing a token, a rejected detection).
+    // (typing, a picker writing a token, a rejected detection). A token a
+    // picker just wrote becomes a pill straight away.
     if app.mode == Mode::Insert && app.live_add_active() {
+        let picker_closed = overlay_was_open && app.draft.overlay().is_none();
+        app.live_absorb(picker_closed);
         app.live_refresh();
     }
 }

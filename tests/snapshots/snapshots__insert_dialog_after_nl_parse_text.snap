@@ -13,16 +13,16 @@ expression: buffer_to_text(&buf)
    +personal         1      5   (B) Draft hiring rubric for senior RAW                              
    +travel           1     (2)  PRIORITY C  ──────────────────────                                  
                             6   (C) Pay quarterly estimated taxes  (A) 2026-05-01 Finish Q2 board   
- CONTEXTS                   7   (C) Order new running shoes +healt deck +work @laptop               
-   @errand╭ ADD TASK ────────────────────────────────────────────────────────────────────╮          
-   @home  │                                                                              │          
-   @laptop│  › Pay rent +home @bank due:2026-06-01 rec:+1m t:-3d█                        │          
-   @phone │   ▦ mon 1 jun   ◷   ↻ every month   + home   @ bank   ▲   ◐ -3d              │          
+ CONTEXTS ╭ ADD TASK ────────────────────────────────────────────────────────────────────╮          
+   @errand│                                                                              │          
+   @home  │  › Pay rent ▐+home▌ ▐@bank▌ ▐▦ due:2026-06-01▌ ▐↻ rec:+1m▌ ▐◐ t:-3d▌█        │          
+   @laptop│                                                                              │          
+   @phone │  ╭─────────────╮ ╭───╮ ╭───────────────╮ ╭────────╮ ╭────────╮ ╭───╮         │          
+          │  │ ▦ mon 1 jun │ │ ◷ │ │ ↻ every month │ │ + home │ │ @ bank │ │ ⚑ │         │          
+          │  ╰─────────────╯ ╰───╯ ╰───────────────╯ ╰────────╯ ╰────────╯ ╰───╯         │          
           │                                                                              │          
           │  Tab chips · Ctrl+Z undo detection · Enter add · Esc                         │          
-          │                                                                              │          
           ╰──────────────────────────────────────────────────────────────────────────────╯          
-                           15       Replace bathroom faucet washer                                  
                                                                                                     
                                                                                                     
                                                                                                     

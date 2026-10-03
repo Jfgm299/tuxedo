@@ -65,6 +65,9 @@ pub(crate) struct LiveState {
     pub(crate) chip_focus: Option<usize>,
     /// Title of the task just added, for the confirmation toast.
     pub(crate) toast: Option<String>,
+    /// Values set through a picker (or typed as `due:` / `rec:` / `at:` /
+    /// `t:` / `(A)` tokens): kept out of the text and shown as pills.
+    pub(crate) picked: super::live_add::Picked,
 }
 
 impl DraftState {
@@ -319,6 +322,28 @@ impl DraftState {
         self.cursor = DraftCursor(start + with.len());
         self.autocomplete_selected = 0;
         self.autocomplete_suppressed = false;
+    }
+
+    /// Remove `start..end` along with one neighbouring space, keeping the
+    /// cursor on the same character (or at `start` if it was inside).
+    pub fn remove_range(&mut self, start: usize, end: usize) {
+        let (mut start, mut end) = (start, end.min(self.text.len()));
+        if self.text[end..].starts_with(' ') {
+            end += 1;
+        } else if start > 0 && self.text[..start].ends_with(' ') {
+            start -= 1;
+        }
+        self.text.replace_range(start..end, "");
+        let cursor = self.cursor.byte();
+        let moved = if cursor >= end {
+            cursor - (end - start)
+        } else if cursor > start {
+            start
+        } else {
+            cursor
+        };
+        self.cursor = DraftCursor::clamped(&self.text, moved);
+        self.reset_autocomplete();
     }
 
     fn reset_autocomplete(&mut self) {

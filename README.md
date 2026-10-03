@@ -55,11 +55,13 @@ the app, and **starred tasks** that stay at the top of their priority.
 - **Unsaved edits are protected**: Esc, `:q` and `Z` refuse to close a note
   with unsaved changes (`:w` to save, `:q!` to discard).
 - **Live capture**: the add dialog understands natural language *while you
-  type* — "call anna on friday at 6pm @calls every week" — colouring each
-  recognised phrase and filling a row of chips (date, time, repeat, project,
-  context, priority). `Tab` walks the chips (`x` rejects a wrong detection,
-  `Enter` opens its picker), `Ctrl+Z` undoes the last detection, one `Enter`
-  adds the task and keeps the dialog open for the next one.
+  type* — "call anna on friday at 6pm @calls every week" — drawing each
+  recognised phrase as a pill with its icon and filling a row of chip boxes
+  (date, time, repeat, project, context, priority). `Tab` walks the chips
+  (`x` rejects a wrong detection, `Enter` opens its picker; what you pick
+  shows as a pill, never as a raw `due:` token), `Ctrl+Z` undoes the last
+  detection, one `Enter` adds the task and keeps the dialog open for the next
+  one.
 - **Starred tasks**: `*` stars a task (a `star:1` tag), which floats it to
   the top of its own priority group — a starred (B) task sits above the other
   (B) tasks, never above an (A).
@@ -756,6 +758,14 @@ task; `o` only opens an existing linked note.
 
 ```toml
 notes_dir = ~/notes
+```
+
+Icons are plain Unicode by default, so they work with any font. With a
+[Nerd Font](https://www.nerdfonts.com/) (e.g. JetBrainsMono Nerd Font) set
+in your terminal, switch to its icons:
+
+```toml
+icons = nerd
 ```
 
 ### Recurrence builder
