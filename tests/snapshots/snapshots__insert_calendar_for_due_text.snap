@@ -18,7 +18,7 @@ expression: buffer_to_text(&buf)
    @home  │                                                                              │          
    @laptop│  > ⚑ (A) Renew passport before summer trip  +travel   @errands ▏       ↑     │          
    @phone │                                                                              │          
-          │     ▦       ◷       ↻      + travel     @ errands     ⚑ (A)                  │          
+          │    + travel     @ errands     ⚑ (A)                                          │          
           │                                                                              │          
           ╰──────────────────────────────────────────────────────────────────────────────╯          
               ╭ DUE ───────────────────────────────────────────╮ph                                  

@@ -73,6 +73,9 @@ pub fn task_object(n: usize, t: &Task, out: &mut String) {
     arr(out, "contexts", &t.contexts);
     out.push(',');
     opt(out, "due", &t.due);
+    opt(out, "planned", &t.planned);
+    opt(out, "duration", &t.duration);
+    opt(out, "reminders", &t.reminders);
     out.push(',');
     opt(out, "rec", &t.rec);
     out.push(',');

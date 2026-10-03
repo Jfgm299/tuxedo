@@ -16,8 +16,10 @@ use crate::todo::Task;
 
 fn same_sort_key(sort: Sort, a: &Task, b: &Task) -> bool {
     match sort {
-        Sort::Priority => a.priority == b.priority && a.starred == b.starred && a.due == b.due,
-        Sort::Due => a.starred == b.starred && a.due == b.due,
+        Sort::Priority => {
+            a.priority == b.priority && a.starred == b.starred && a.date() == b.date()
+        }
+        Sort::Due => a.starred == b.starred && a.date() == b.date(),
         Sort::File => true,
     }
 }
@@ -483,7 +485,7 @@ mod tests {
         assert_eq!(app.tasks().len(), 0);
         assert_eq!(
             app.draft.text(),
-            "Pay rent +home @bank due:2026-06-01 rec:+1m t:-3d"
+            "Pay rent +home @bank plan:2026-06-01 rec:+1m t:-3d"
         );
         assert_eq!(
             app.flash_active(),
@@ -501,7 +503,7 @@ mod tests {
         assert_eq!(outcome, crate::app::AddOutcome::Saved);
         assert_eq!(app.tasks().len(), 1);
         assert!(app.tasks()[0].raw.contains("Buy milk"));
-        assert_eq!(app.tasks()[0].due.as_deref(), Some("2026-05-07"));
+        assert_eq!(app.tasks()[0].planned.as_deref(), Some("2026-05-07"));
     }
 
     #[test]

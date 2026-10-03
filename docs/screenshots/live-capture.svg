@@ -49,12 +49,8 @@
 <rect x="360.0" y="256.0" width="8.0" height="16.0" fill="#1f232b"/>
 <rect x="368.0" y="256.0" width="128.0" height="16.0" fill="#3a3b4d"/>
 <rect x="496.0" y="256.0" width="8.0" height="16.0" fill="#1f232b"/>
-<rect x="504.0" y="256.0" width="56.0" height="16.0" fill="#2e323a"/>
-<rect x="560.0" y="256.0" width="8.0" height="16.0" fill="#1f232b"/>
-<rect x="568.0" y="256.0" width="88.0" height="16.0" fill="#443d3a"/>
-<rect x="656.0" y="256.0" width="8.0" height="16.0" fill="#1f232b"/>
-<rect x="664.0" y="256.0" width="56.0" height="16.0" fill="#2e323a"/>
-<rect x="720.0" y="256.0" width="320.0" height="16.0" fill="#1f232b"/>
+<rect x="504.0" y="256.0" width="88.0" height="16.0" fill="#443d3a"/>
+<rect x="592.0" y="256.0" width="448.0" height="16.0" fill="#1f232b"/>
 <rect x="0.0" y="272.0" width="1040.0" height="16.0" fill="#1f232b"/>
 <rect x="0.0" y="288.0" width="1040.0" height="16.0" fill="#1f232b"/>
 <rect x="0.0" y="304.0" width="208.0" height="16.0" fill="#1f232b"/>
@@ -1108,14 +1104,12 @@
 <text x="456.00" y="268.48" fill="#9a8fc4">e</text>
 <text x="464.00" y="268.48" fill="#9a8fc4">e</text>
 <text x="472.00" y="268.48" fill="#9a8fc4">k</text>
-<text x="528.00" y="268.48" fill="#6b7280">+</text>
-<text x="584.00" y="268.48" fill="#c89a6e">@</text>
-<text x="600.00" y="268.48" fill="#c89a6e">c</text>
-<text x="608.00" y="268.48" fill="#c89a6e">a</text>
-<text x="616.00" y="268.48" fill="#c89a6e">l</text>
-<text x="624.00" y="268.48" fill="#c89a6e">l</text>
-<text x="632.00" y="268.48" fill="#c89a6e">s</text>
-<text x="688.00" y="268.48" fill="#6b7280">⚑</text>
+<text x="520.00" y="268.48" fill="#c89a6e">@</text>
+<text x="536.00" y="268.48" fill="#c89a6e">c</text>
+<text x="544.00" y="268.48" fill="#c89a6e">a</text>
+<text x="552.00" y="268.48" fill="#c89a6e">l</text>
+<text x="560.00" y="268.48" fill="#c89a6e">l</text>
+<text x="568.00" y="268.48" fill="#c89a6e">s</text>
 <text x="912.00" y="268.48" fill="#5f738a">│</text>
 <text x="120.00" y="284.48" fill="#5f738a">│</text>
 <text x="912.00" y="284.48" fill="#5f738a">│</text>

@@ -1985,18 +1985,21 @@ fn apply_action(app: &mut App, action: Action) {
                 app.set_view(View::List);
             }
         }
-        // Opens to insert mode just like i/e but with the calendar open and the cursor on the calendar
-        // If there is a due date, the cursor begins on the current due date
-        // If there is no due date, the cursor begins on today
-        // Enter/escape takes the user back to insert mode on the task
+        // Opens to insert mode just like i/e but with the calendar open and the cursor on the calendar.
+        // It moves the planned date — or the deadline, for a task that only has one — starting
+        // on that date (today when there is none). Enter/escape goes back to insert mode on the task.
         Action::Reschedule => {
             if let Some(abs) = app.cur_abs()
                 && let Some(raw) = app.task_raw(abs)
             {
+                let target = match app.tasks().get(abs) {
+                    Some(t) if t.planned.is_none() && t.due.is_some() => CalendarTarget::Due,
+                    _ => CalendarTarget::Planned,
+                };
                 app.selection.enter_edit(abs);
                 app.draft_set_insert(raw);
                 app.mode = Mode::Insert;
-                app.open_calendar(CalendarTarget::Due);
+                app.open_calendar(target);
             }
         }
         Action::ChangeWeekStart => {
@@ -2757,7 +2760,11 @@ mod tests {
         app.add_from_draft();
         assert!(app.draft.overlay().is_none());
         let task = app.tasks().last().expect("task added");
-        assert_eq!(task.due.as_deref(), Some("2026-06-07"));
+        assert_eq!(
+            task.planned.as_deref(),
+            Some("2026-06-07"),
+            "no date: plans it"
+        );
     }
 
     #[test]

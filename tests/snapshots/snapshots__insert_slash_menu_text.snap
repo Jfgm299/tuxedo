@@ -18,12 +18,13 @@ expression: buffer_to_text(&buf)
    @home  │                                                                              │          
    @laptop│  > Schedule team offsite  +work   @phone  /▏                           ↑     │          
    @phone │                                                                              │          
-          │     ▦       ◷       ↻      + work     @ phone      ⚑                         │          
+          │    + work     @ phone                                                        │          
           │                                                                              │          
           ╰──────────────────────────────────────────────────────────────────────────────╯          
               ╭──────────────────────────────────────────────────────────╮                          
               │ ATTACH METADATA                                          │                          
-              │  Due date    when this needs doing                  /due │                          
+              │  Planned     when you'll do it                     /plan │                          
+              │  Due date    the deadline                           /due │                          
               │  Recurrence  repeat after completing                /rec │                          
               │  Threshold   hide until this date                     /t │                          
               │  Priority    A · B · C                             /prio │                          
@@ -32,5 +33,4 @@ expression: buffer_to_text(&buf)
               │                                                          │                          
               │  ↑↓ pick · Enter insert · Esc dismiss · type to filter   │                          
               ╰──────────────────────────────────────────────────────────╯                          
-                                                                                                    
  INSERT   type naturally: tomorrow at 6pm, every fri and sat, 15 open · 2026-05-06 · tasq 2026.10.0

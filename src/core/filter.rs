@@ -59,7 +59,8 @@ pub fn get_week_cutoff(today: &str, week_start: &WeekStart) -> Option<(String, S
 
 /// If the date cannot be parsed we assign to Later
 pub fn due_bucket(task: &Task, today: &str, week_start: &WeekStart) -> ListDueBucket {
-    match task.due.as_deref() {
+    // Grouped by the day it's planned for, else its deadline.
+    match task.date() {
         None => ListDueBucket::NoDue,
         Some(d) => {
             let Some((this_week, next_week)) = get_week_cutoff(today, week_start) else {
@@ -198,7 +199,8 @@ pub fn is_future_threshold(t: &Task, today: &str) -> bool {
     let Some(spec) = threshold::parse_threshold(raw) else {
         return false;
     };
-    let Some(date) = threshold::resolve(&spec, t.due.as_deref(), t.created_date.as_deref()) else {
+    let anchor = t.due.as_deref().or(t.planned.as_deref());
+    let Some(date) = threshold::resolve(&spec, anchor, t.created_date.as_deref()) else {
         return false;
     };
     date.format("%Y-%m-%d").to_string().as_str() > today
@@ -211,12 +213,8 @@ fn cmp_priority(tasks: &[Task]) -> impl Fn(&usize, &usize) -> Ordering + '_ {
         let tb = &tasks[b];
         let pa = ta.priority.unwrap_or('Z');
         let pb = tb.priority.unwrap_or('Z');
-        pa.cmp(&pb).then_with(|| {
-            ta.due
-                .as_deref()
-                .unwrap_or("z")
-                .cmp(tb.due.as_deref().unwrap_or("z"))
-        })
+        pa.cmp(&pb)
+            .then_with(|| ta.date().unwrap_or("z").cmp(tb.date().unwrap_or("z")))
     }
 }
 
@@ -224,10 +222,9 @@ fn cmp_priority(tasks: &[Task]) -> impl Fn(&usize, &usize) -> Ordering + '_ {
 fn cmp_due(tasks: &[Task]) -> impl Fn(&usize, &usize) -> Ordering + '_ {
     |&a, &b| {
         tasks[a]
-            .due
-            .as_deref()
+            .date()
             .unwrap_or("z")
-            .cmp(tasks[b].due.as_deref().unwrap_or("z"))
+            .cmp(tasks[b].date().unwrap_or("z"))
     }
 }
 

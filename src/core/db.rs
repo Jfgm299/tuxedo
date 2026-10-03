@@ -20,7 +20,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::todo::{self, Task};
 
 /// The schema version this build reads and writes.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta (
@@ -128,21 +128,17 @@ impl Db {
             )
             .optional()
             .map_err(io_err)?;
-        match version.and_then(|v| v.parse::<i64>().ok()) {
-            None => {
-                conn.execute(
-                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
-                    [SCHEMA_VERSION.to_string()],
-                )
-                .map_err(io_err)?;
-            }
-            Some(v) if v > SCHEMA_VERSION => {
-                return Err(std::io::Error::other(format!(
-                    "{} was written by a newer tasq (schema {v}); update tasq to open it",
-                    path.display()
-                )));
-            }
-            Some(_) => {}
+        // `SCHEMA` creates the version-1 tables; later versions are steps.
+        let stored = version.is_some();
+        let version = version.and_then(|v| v.parse::<i64>().ok()).unwrap_or(1);
+        if version > SCHEMA_VERSION {
+            return Err(std::io::Error::other(format!(
+                "{} was written by a newer tasq (schema {version}); update tasq to open it",
+                path.display()
+            )));
+        }
+        if version < SCHEMA_VERSION || !stored {
+            migrate(&conn, version).map_err(io_err)?;
         }
         let mut db = Self {
             conn,
@@ -267,6 +263,69 @@ impl Db {
     }
 }
 
+/// Bring a database at `from` up to [`SCHEMA_VERSION`], in one transaction.
+fn migrate(conn: &Connection, from: i64) -> rusqlite::Result<()> {
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let result = (|| {
+        if from < 2 {
+            // Planned date, duration and reminders as columns, filled in
+            // from the stored lines.
+            conn.execute_batch(
+                "ALTER TABLE tasks ADD COLUMN planned TEXT;
+                 ALTER TABLE tasks ADD COLUMN duration_min INTEGER;
+                 ALTER TABLE tasks ADD COLUMN reminders TEXT;",
+            )?;
+            let rows: Vec<(String, String)> = {
+                let mut stmt = conn.prepare("SELECT id, raw FROM tasks")?;
+                stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<Result<_, _>>()?
+            };
+            for (id, raw) in rows {
+                if let Ok(task) = todo::parse_line(&raw) {
+                    let (planned, duration, reminders) = extra_columns(&task);
+                    conn.execute(
+                        "UPDATE tasks SET planned = ?2, duration_min = ?3, reminders = ?4
+                         WHERE id = ?1",
+                        params![id, planned, duration, reminders],
+                    )?;
+                }
+            }
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
+            [SCHEMA_VERSION.to_string()],
+        )?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => conn.execute_batch("COMMIT"),
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
+}
+
+/// The columns added in schema 2: planned date, duration in minutes and
+/// reminders (minutes before, comma-separated).
+fn extra_columns(task: &Task) -> (Option<String>, Option<u32>, Option<String>) {
+    let duration = task
+        .duration
+        .as_deref()
+        .and_then(crate::duration::parse_minutes);
+    let reminders = task
+        .reminders
+        .as_deref()
+        .and_then(crate::duration::parse_reminders)
+        .map(|list| {
+            list.iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        });
+    (task.planned.clone(), duration, reminders)
+}
+
 /// Insert or fully rewrite one task row (and its tags). `created` is set for
 /// a new row; an existing row keeps its `created_at`.
 fn write_row(
@@ -280,11 +339,14 @@ fn write_row(
     let time = todo::find_kv(todo::body_after_priority(&task.raw), "at");
     let priority = task.priority.map(|c| c.to_string());
     let title = title_of(&task.raw);
+    let (planned, duration, reminders) = extra_columns(task);
     match created {
         Some(created) => tx.execute(
             "INSERT INTO tasks (id, list, position, raw, title, done, done_on, created_on,
-                 priority, starred, due, show_from, repeat, time, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                 priority, starred, due, show_from, repeat, time, created_at, updated_at,
+                 planned, duration_min, reminders)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                 ?17, ?18, ?19)",
             params![
                 task.id,
                 list.as_str(),
@@ -301,13 +363,17 @@ fn write_row(
                 task.rec,
                 time,
                 created,
-                now
+                now,
+                planned,
+                duration,
+                reminders
             ],
         ),
         None => tx.execute(
             "UPDATE tasks SET list = ?2, position = ?3, raw = ?4, title = ?5, done = ?6,
                  done_on = ?7, created_on = ?8, priority = ?9, starred = ?10, due = ?11,
-                 show_from = ?12, repeat = ?13, time = ?14, updated_at = ?15
+                 show_from = ?12, repeat = ?13, time = ?14, updated_at = ?15,
+                 planned = ?16, duration_min = ?17, reminders = ?18
              WHERE id = ?1",
             params![
                 task.id,
@@ -324,7 +390,10 @@ fn write_row(
                 task.threshold,
                 task.rec,
                 time,
-                now
+                now,
+                planned,
+                duration,
+                reminders
             ],
         ),
     }
@@ -503,6 +572,42 @@ mod tests {
         assert!(!a.changed_externally().unwrap(), "own writes aren't news");
         assert_eq!(b.load(List::Live).unwrap().len(), 2);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_version_1_database_is_migrated() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('schema_version', '1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks (id, list, position, raw, title, done, starred, created_at, updated_at)
+             VALUES ('A', 'live', 0, 'Gym plan:2026-10-05 dur:1h remind:15m,1d', 'Gym', 0, 0, 'x', 'x')",
+            [],
+        )
+        .unwrap();
+        let db = Db::init(conn, PathBuf::from(":memory:")).unwrap();
+        let row: (Option<String>, Option<i64>, Option<String>, String) = db
+            .conn
+            .query_row(
+                "SELECT planned, duration_min, reminders,
+                     (SELECT value FROM meta WHERE key = 'schema_version') FROM tasks",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                Some("2026-10-05".into()),
+                Some(60),
+                Some("15,1440".into()),
+                "2".into()
+            )
+        );
     }
 
     #[test]

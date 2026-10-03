@@ -30,14 +30,21 @@ local database, notes, live natural-language capture and more, listed below.
 
 ### What tasq adds
 
+- **Planned dates and deadlines**: "on friday" is when you'll do it
+  (`plan:`), "by friday" when it's due (`due:`); plus a time (`at 6pm`),
+  a duration (`for 1h`) and reminders (`remind me 15 min before`), each
+  with its own chip in the add dialog.
 - **A local database** (SQLite) holds your tasks, each with a stable id —
   the base for sync, calendars and the phone. The first run imports your
   todo.txt and done.txt and leaves the files as they were; `tasq export`
   writes todo.txt back out, and `tasq FILE.txt` still edits a todo.txt
   directly.
 
-- **Multiple notes per task**, stored one per file under `notes_dir/tasks/<id>/`
-  (`notes:<id>/` token), replacing upstream's single-file `note:<path>` model.
+- **Multiple notes per task**, kept in the database with your tasks (they
+  sync with them later) and linked by a `notes:<id>/` token, replacing
+  upstream's single-file `note:<path>` model. They're still plain Markdown:
+  `E` opens one in your `$EDITOR`. A todo.txt opened directly keeps them as
+  files under `notes_dir/tasks/<id>/`.
 - **A popup to browse/manage them** (`o` on a task) instead of shelling out
   to `$EDITOR`. A new note starts with just the task's title as a heading.
 - **An embedded markdown editor** built into the TUI itself — no external
@@ -121,7 +128,7 @@ local database, notes, live natural-language capture and more, listed below.
 | | `Z` | Close the pinned note, from anywhere |
 | | `Tab` / `Shift+Tab` | Switch between pinned notes (when more than one is pinned) |
 | Task list | `*` | Star / unstar the task: top of its priority group |
-| Add dialog (`n`) | type naturally | `tomorrow`, `on friday`, `at 6pm`, `every week`, `every fri, sat and sun`, `+project`, `@context`, `high priority` are detected live |
+| Add dialog (`n`) | type naturally | `tomorrow`, `on friday` (planned), `by friday` (deadline), `at 6pm`, `for 1h`, `remind me 15 min before`, `every week`, `every fri, sat and sun`, `+project`, `@context`, `high priority` are detected live |
 | | `Tab` / `Shift+Tab` | Walk the chips; on a chip `x` rejects it, `Enter` opens its picker, `Esc` returns to the text |
 | | `Ctrl+Z` | Undo the newest detection (its words become plain text); on an empty dialog, undo the task just added |
 | | `Enter` | Add the task (converted to todo.txt) and stay open for the next one |
@@ -598,8 +605,15 @@ Standard [todo.txt](https://github.com/todotxt/todo.txt) lines:
 - `2026-04-28` — creation date in ISO 8601
 - `+project` — project tag
 - `@context` — context tag
-- `key:value` — extension; `due:YYYY-MM-DD` is recognized for sort and
-  due-bucket grouping in the list view. `note:<path>` is recognized by the
+- `key:value` — extension. tasq reads these:
+  - `plan:YYYY-MM-DD` — when you plan to do it ("on friday");
+  - `due:YYYY-MM-DD` — the deadline ("by friday"); only a deadline turns
+    red when it's past;
+  - `at:HH:MM` — time of day; `dur:1h30m` — how long it takes;
+    `remind:15m,1d` — reminders before its time;
+  - the list sorts and groups by the planned date, else the deadline.
+
+  `note:<path>` `note:<path>` is recognized by the
   note actions (`o` / `O`): relative paths resolve under `notes_dir`, then
   `$NOTES_DIR`, then `~/notes`. Keys you'd rather not see can be hidden from
   the rows via [`hide_keys`](#hiding-keyvalue-tags)
@@ -612,9 +626,10 @@ Standard [todo.txt](https://github.com/todotxt/todo.txt) lines:
   in a search is used this way; the rest of the query is matched as free text
   against the task body, same as before
 - `rec:[+]N{d,b,w,m,y}` — recurrence; on completion (`x`), tasq inserts
-  a fresh copy of the task with `due:` advanced by `N` days, business
-  days (Mon–Fri), weeks, months, or years. The `+` prefix means
-  *strict* recurrence anchored to the previous due date (e.g.
+  a fresh copy of the task with its date advanced by `N` days, business
+  days (Mon–Fri), weeks, months, or years — the deadline if it has one
+  (keeping the gap to its planned date), else the planned date. The `+`
+  prefix means *strict* recurrence anchored to the previous date (e.g.
   `rec:+1m` for monthly rent on the 15th); without it, the new due is
   computed from the completion date (e.g. `rec:1w` for "water plants
   one week after I last did"). A weekly rule can name its weekdays:
@@ -645,19 +660,22 @@ todo.txt — review or tweak it, then Enter again to save.
 
 | What you type | What lands in the draft |
 | --- | --- |
-| `Pay rent monthly on the first of the month, show the todo 3 days before the due date. It's part of project home and context bank` | `Pay rent +home @bank due:2026-06-01 rec:+1m t:-3d` |
-| `Buy milk tomorrow` | `Buy milk due:2026-05-12` |
-| `Call mom every week starting Friday for project family` | `Call mom +family due:2026-05-15 rec:+1w` |
-| `Submit timesheet every other friday show 1 day before` | `Submit timesheet due:2026-05-15 rec:+2w t:-1d` |
+| `Pay rent monthly on the first of the month, show the todo 3 days before the due date. It's part of project home and context bank` | `Pay rent +home @bank plan:2026-06-01 rec:+1m t:-3d` |
+| `Buy milk tomorrow` | `Buy milk plan:2026-05-12` |
+| `Essay on wednesday by friday` | `Essay plan:2026-05-13 due:2026-05-15` |
+| `Dentist thursday at 5pm for 1h remind me 15 min before` | `Dentist plan:2026-05-14 at:17:00 dur:1h remind:15m` |
+| `Call mom every week starting Friday for project family` | `Call mom +family plan:2026-05-15 rec:+1w` |
+| `Submit timesheet every other friday show 1 day before` | `Submit timesheet plan:2026-05-15 rec:+2w t:-1d` |
 | `Daily standup high priority` | `(A) standup rec:+1d` |
-| `Gym every mon, wed and fri at 7am` | `Gym due:2026-05-13 rec:+1w:mon,wed,fri at:07:00` |
-| `Swim every other monday, tuesday` | `Swim due:2026-05-12 rec:+2w:mon,tue` |
-| `Annual review April 15 +work @office` | `Annual review +work @office due:2027-04-15` |
+| `Gym every mon, wed and fri at 7am` | `Gym plan:2026-05-13 rec:+1w:mon,wed,fri at:07:00` |
+| `Swim every other monday, tuesday` | `Swim plan:2026-05-12 rec:+2w:mon,tue` |
+| `Annual review due April 15 +work @office` | `Annual review +work @office due:2027-04-15` |
 
 Recognized vocabulary:
 
-- **Dates** — `today`, `tonight`, `tomorrow`, `yesterday`, weekdays (`monday` / `mon` …), months (`april 15`, `15th of april`), `in 3 days`, `the first of the month`, ISO `2026-05-15`.
-- **Recurrence** — `daily`, `weekly`, `biweekly`, `monthly`, `yearly`, `annually`, `every monday`, `every 2 weeks`, `every other friday`, `every business day`.
+- **Dates** — `today`, `tonight`, `tomorrow`, `yesterday`, weekdays (`monday` / `mon` …), months (`april 15`, `15th of april`), `in 3 days`, `the first of the month`, ISO `2026-05-15`. A date is when it's **planned**; after `by`, `due`, `before` or `deadline` it's the **deadline**. One line can have both.
+- **Time, duration, reminders** — `at 6pm`, `at 18:30`, `noon`; `for 1h`, `for 30 min`, `for half an hour`, `45 min`, `1h30m`; `remind me 15 min before`, `reminder 1 day before`, `10 minutes before`.
+- **Recurrence** — `daily`, `weekly`, `biweekly`, `monthly`, `yearly`, `annually`, `every monday`, `every 2 weeks`, `every other friday`, `every business day`, `every mon, wed and fri`, `every other tue and thu`, `every weekend`, `mondays and thursdays`.
 - **Threshold** — `show 3 days before due`, `2 weeks before due`.
 - **Projects / contexts** — prose form `project home` and `context bank`, or the standard `+home` / `@bank` sigils.
 - **Priority** — `high priority` → A, `medium priority` → B, `low priority` → C, or `priority A`.

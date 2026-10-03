@@ -25,7 +25,14 @@ use crate::todo;
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ParsedNl {
     pub body: String,
+    /// The deadline: "by friday", "due friday".
     pub due: Option<NaiveDate>,
+    /// When you plan to do it: "on friday", "tomorrow".
+    pub planned: Option<NaiveDate>,
+    /// How long it takes, in minutes: "for 1h".
+    pub duration: Option<u32>,
+    /// Reminders, in minutes before its time: "remind me 15 min before".
+    pub reminders: Vec<u32>,
     pub rec: Option<String>,
     pub threshold: Option<String>,
     pub projects: Vec<String>,
@@ -39,8 +46,14 @@ pub struct ParsedNl {
 /// What a recognised phrase sets — one per chip in the add dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FieldKind {
-    /// The task's date (`due:`).
+    /// When it's planned (`plan:`).
     Date,
+    /// The deadline (`due:`).
+    Deadline,
+    /// How long it takes (`dur:`).
+    Duration,
+    /// Reminders before its time (`remind:`).
+    Reminder,
     /// Time of day (`at:`).
     Time,
     /// Recurrence (`rec:`).
@@ -124,6 +137,8 @@ fn detect_once(text: &str, today: NaiveDate, blocked: &[bool]) -> Detection {
     pass_canonical(&mut scratch, &mut parsed);
     pass_sigiled(&mut scratch, &mut parsed);
     pass_time(&mut scratch, &mut parsed);
+    pass_reminder(&mut scratch, &mut parsed);
+    pass_duration(&mut scratch, &mut parsed);
     pass_threshold(&mut scratch, &mut parsed);
     let weekday_hint = pass_recurrence(&mut scratch, &mut parsed);
     pass_date(&mut scratch, &mut parsed, today, weekday_hint);
@@ -164,7 +179,10 @@ fn merge_spans(text: &str, mut spans: Vec<DetectedSpan>) -> Vec<DetectedSpan> {
 ///    weekdays, months, recurrence vocabulary, `before`, `project`,
 ///    `context`, …).
 pub fn looks_like_natural_language(text: &str) -> bool {
-    if has_kv_token(text, "due") || has_kv_token(text, "rec") || has_kv_token(text, "t") {
+    if ["due", "plan", "rec", "t"]
+        .iter()
+        .any(|k| has_kv_token(text, k))
+    {
         return false;
     }
     contains_trigger(text)
@@ -180,6 +198,8 @@ pub fn try_parse(text: &str, today: NaiveDate) -> Option<ParsedNl> {
     pass_leading_priority(&mut scratch, &mut parsed);
     pass_sigiled(&mut scratch, &mut parsed);
     pass_time(&mut scratch, &mut parsed);
+    pass_reminder(&mut scratch, &mut parsed);
+    pass_duration(&mut scratch, &mut parsed);
     pass_threshold(&mut scratch, &mut parsed);
     let weekday_hint = pass_recurrence(&mut scratch, &mut parsed);
     pass_date(&mut scratch, &mut parsed, today, weekday_hint);
@@ -189,6 +209,9 @@ pub fn try_parse(text: &str, today: NaiveDate) -> Option<ParsedNl> {
     parsed.body = scratch.remaining_cleaned();
 
     let extracted = parsed.due.is_some()
+        || parsed.planned.is_some()
+        || parsed.duration.is_some()
+        || !parsed.reminders.is_empty()
         || parsed.rec.is_some()
         || parsed.threshold.is_some()
         || !parsed.projects.is_empty()
@@ -224,6 +247,10 @@ pub fn format_as_todo_txt(p: &ParsedNl) -> String {
         out.push_str(" @");
         out.push_str(ctx);
     }
+    if let Some(d) = p.planned {
+        out.push_str(" plan:");
+        out.push_str(&d.format("%Y-%m-%d").to_string());
+    }
     if let Some(d) = p.due {
         out.push_str(" due:");
         out.push_str(&d.format("%Y-%m-%d").to_string());
@@ -238,6 +265,19 @@ pub fn format_as_todo_txt(p: &ParsedNl) -> String {
     }
     if let Some((h, m)) = p.time {
         out.push_str(&format!(" at:{h:02}:{m:02}"));
+    }
+    if let Some(m) = p.duration {
+        out.push_str(" dur:");
+        out.push_str(&crate::duration::format_minutes(m));
+    }
+    if !p.reminders.is_empty() {
+        let list: Vec<String> = p
+            .reminders
+            .iter()
+            .map(|m| crate::duration::format_minutes(*m))
+            .collect();
+        out.push_str(" remind:");
+        out.push_str(&list.join(","));
     }
     out
 }
@@ -526,9 +566,30 @@ fn pass_canonical(scratch: &mut Scratch, p: &mut ParsedNl) {
             "due" => match NaiveDate::parse_from_str(value, "%Y-%m-%d") {
                 Ok(d) => {
                     p.due = Some(d);
+                    FieldKind::Deadline
+                }
+                Err(_) => continue,
+            },
+            "plan" => match NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+                Ok(d) => {
+                    p.planned = Some(d);
                     FieldKind::Date
                 }
                 Err(_) => continue,
+            },
+            "dur" => match crate::duration::parse_minutes(value) {
+                Some(m) => {
+                    p.duration = Some(m);
+                    FieldKind::Duration
+                }
+                None => continue,
+            },
+            "remind" => match crate::duration::parse_reminders(value) {
+                Some(r) => {
+                    p.reminders = r;
+                    FieldKind::Reminder
+                }
+                None => continue,
             },
             "t" if crate::threshold::parse_threshold(value).is_some() => {
                 p.threshold = Some(value.to_string());
@@ -689,6 +750,125 @@ fn push_unique(out: &mut Vec<String>, name: &str) {
     }
     if !out.iter().any(|x| x == name) {
         out.push(name.to_string());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reminders ("remind me 15 min before") and duration ("for 1h")
+// ---------------------------------------------------------------------------
+
+/// Minutes in `n` of `unit` ("min", "hours", "day"…), when `unit` is a
+/// unit of time; `days` also allows days and weeks.
+fn unit_minutes(unit: &str, days: bool) -> Option<u32> {
+    Some(match unit {
+        "m" | "min" | "mins" | "minute" | "minutes" => 1,
+        "h" | "hr" | "hrs" | "hour" | "hours" => 60,
+        "d" | "day" | "days" if days => 60 * 24,
+        "w" | "week" | "weeks" if days => 60 * 24 * 7,
+        _ => return None,
+    })
+}
+
+/// A length at `words[i]`: "15 min", "1 hour", "an hour", "half an hour",
+/// or one word like "90m" / "1h30m". Returns minutes and words used.
+fn length_at(
+    scratch: &Scratch,
+    words: &[(usize, usize)],
+    i: usize,
+    days: bool,
+) -> Option<(u32, usize)> {
+    let live = |j: usize| words.get(j).is_some_and(|r| scratch.is_live(r.0, r.1));
+    if !live(i) {
+        return None;
+    }
+    let w = scratch.word_lc(words[i]);
+    if w == "half" && live(i + 1) && live(i + 2) {
+        let (a, h) = (scratch.word_lc(words[i + 1]), scratch.word_lc(words[i + 2]));
+        if (a == "an" || a == "a") && h == "hour" {
+            return Some((30, 3));
+        }
+    }
+    if (w == "an" || w == "a") && live(i + 1) {
+        let unit = scratch.word_lc(words[i + 1]);
+        if matches!(unit, "hour" | "day" | "week") {
+            return unit_minutes(unit, days).map(|m| (m, 2));
+        }
+    }
+    if let Some(n) = parse_number(w)
+        && live(i + 1)
+        && let Some(per) = unit_minutes(scratch.word_lc(words[i + 1]), days)
+    {
+        return Some((n.checked_mul(per)?, 2));
+    }
+    // One word: "90m", "1h30m", "2d".
+    let compact = crate::duration::parse_minutes(w)?;
+    let has_long_unit = w.contains('d') || w.contains('w');
+    (days || !has_long_unit).then_some((compact, 1))
+}
+
+/// "remind me 15 min before", "reminder 1 day before", "alert 10 minutes
+/// before", and without a reminder word "15 min before" (minutes and hours
+/// only, so "3 days before" stays a show-from).
+fn pass_reminder(scratch: &mut Scratch, p: &mut ParsedNl) {
+    scratch.kind = Some(FieldKind::Reminder);
+    if !p.reminders.is_empty() {
+        return;
+    }
+    let words = scratch.word_cache.clone();
+    let live = |s: &Scratch, j: usize| words.get(j).is_some_and(|r| s.is_live(r.0, r.1));
+    for i in 0..words.len() {
+        if !live(scratch, i) {
+            continue;
+        }
+        let w = scratch.word_lc(words[i]);
+        let mut at = i;
+        let worded = matches!(w, "remind" | "reminder" | "alert" | "notify");
+        if worded {
+            at += 1;
+            if live(scratch, at) && matches!(scratch.word_lc(words[at]), "me" | "us") {
+                at += 1;
+            }
+        }
+        let Some((minutes, n)) = length_at(scratch, &words, at, worded) else {
+            continue;
+        };
+        let end = at + n;
+        if !(live(scratch, end) && scratch.word_lc(words[end]) == "before") {
+            continue;
+        }
+        scratch.mark(words[i].0, words[end].1);
+        p.reminders.push(minutes);
+        return;
+    }
+}
+
+/// "for 1h", "for 30 min", "for half an hour", "takes 2 hours", and a
+/// bare "45 min" / "1h30m". Minutes and hours only: "for 3 days" is not a
+/// duration tasq tracks.
+fn pass_duration(scratch: &mut Scratch, p: &mut ParsedNl) {
+    scratch.kind = Some(FieldKind::Duration);
+    if p.duration.is_some() {
+        return;
+    }
+    let words = scratch.word_cache.clone();
+    for i in 0..words.len() {
+        if !scratch.is_live(words[i].0, words[i].1) {
+            continue;
+        }
+        let w = scratch.word_lc(words[i]);
+        let lead = matches!(w, "for" | "takes" | "lasting");
+        let at = if lead { i + 1 } else { i };
+        let Some((minutes, n)) = length_at(scratch, &words, at, false) else {
+            continue;
+        };
+        // A bare number + "m" could be anything ("5 m of cable"); without
+        // "for" only unmistakable units count.
+        if !lead && n == 2 && matches!(scratch.word_lc(words[at + 1]), "m" | "h") {
+            continue;
+        }
+        scratch.mark(words[i].0, words[at + n - 1].1);
+        p.duration = Some(minutes);
+        return;
     }
 }
 
@@ -1057,33 +1237,49 @@ fn pass_date(
     today: NaiveDate,
     weekday_hint: Option<Weekday>,
 ) {
-    scratch.kind = Some(FieldKind::Date);
-    if p.due.is_some() {
-        return;
-    }
     let words = scratch.word_cache.clone();
     for i in 0..words.len() {
+        if p.planned.is_some() && p.due.is_some() {
+            break;
+        }
         if !scratch.is_live(words[i].0, words[i].1) {
             continue;
         }
+        // "by friday", "due friday", "deadline friday" set the deadline;
+        // any other date is when it's planned.
+        let deadline = matches!(
+            scratch.word_lc(words[i]),
+            "by" | "due" | "deadline" | "before"
+        );
+        if (deadline && p.due.is_some()) || (!deadline && p.planned.is_some()) {
+            continue;
+        }
         if let Some((date, count)) = match_date_at(scratch, &words, i, today) {
-            let start_byte = words[i].0;
-            let end_byte = words[i + count - 1].1;
-            scratch.mark(start_byte, end_byte);
-            p.due = Some(date);
-            return;
+            scratch.kind = Some(if deadline {
+                FieldKind::Deadline
+            } else {
+                FieldKind::Date
+            });
+            scratch.mark(words[i].0, words[i + count - 1].1);
+            if deadline {
+                p.due = Some(date);
+            } else {
+                p.planned = Some(date);
+            }
         }
     }
-    // "every fri, sat and sun": the first of those days.
-    if let Some(first) = p.rec.as_deref().and_then(|r| first_rec_day(r, today)) {
-        p.due = Some(first);
+    if p.planned.is_some() {
         return;
     }
-    if p.due.is_none()
-        && let Some(wd) = weekday_hint
+    // "every fri, sat and sun": planned on the first of those days.
+    if let Some(first) = p.rec.as_deref().and_then(|r| first_rec_day(r, today)) {
+        p.planned = Some(first);
+        return;
+    }
+    if let Some(wd) = weekday_hint
         && let Some(d) = next_weekday(today, wd, true)
     {
-        p.due = Some(d);
+        p.planned = Some(d);
     }
 }
 
@@ -1126,7 +1322,7 @@ fn match_date_at(
     // consumed along with the date so it doesn't survive into the body. Any
     // "before" still standing at this point has already been ignored by the
     // threshold pass (which would have consumed "N <unit> before [trailers]").
-    if matches!(w, "starting" | "on" | "due" | "by" | "before")
+    if matches!(w, "starting" | "on" | "due" | "by" | "before" | "deadline")
         && let Some((d, count)) = next_alive_match(scratch, words, i + 1, today)
     {
         return Some((d, 1 + count));
@@ -1588,13 +1784,81 @@ mod tests {
         ] {
             let p = detect(input, today, &[]).parsed;
             assert_eq!(p.rec.as_deref(), Some(rec), "{input}");
-            assert_eq!(p.due, Some(d(due)), "{input}");
+            assert_eq!(p.planned, Some(d(due)), "{input}");
             assert_eq!(p.body.trim(), body, "{input}");
         }
         // A single day stays the plain weekly rule.
         let p = detect("call mom every sunday and relax", today, &[]).parsed;
         assert_eq!(p.rec.as_deref(), Some("+1w"));
         assert!(p.body.contains("and relax"), "{p:?}");
+    }
+
+    #[test]
+    fn planned_and_deadline_durations_and_reminders() {
+        // 2026-10-03 is a Saturday.
+        let today = d("2026-10-03");
+        let p = detect("study topic 3 on monday by friday", today, &[]).parsed;
+        assert_eq!(p.planned, Some(d("2026-10-05")));
+        assert_eq!(p.due, Some(d("2026-10-09")));
+        assert_eq!(p.body, "study topic 3");
+
+        let p = detect("deadline friday submit essay", today, &[]).parsed;
+        assert_eq!(p.due, Some(d("2026-10-09")));
+        assert_eq!(p.planned, None);
+
+        for (input, minutes, body) in [
+            ("gym tomorrow at 7am for 1h", 60, "gym"),
+            ("call for 30 min", 30, "call"),
+            ("meeting for half an hour", 30, "meeting"),
+            ("deep work for 2 hours", 120, "deep work"),
+            ("review 45 min", 45, "review"),
+            ("focus 1h30m", 90, "focus"),
+            ("lunch for an hour", 60, "lunch"),
+        ] {
+            let p = detect(input, today, &[]).parsed;
+            assert_eq!(p.duration, Some(minutes), "{input}");
+            assert_eq!(p.body, body, "{input}");
+        }
+        // Not lengths of a task.
+        for input in ["buy 2 m of cable", "for the kids", "plan for 3 days"] {
+            assert_eq!(detect(input, today, &[]).parsed.duration, None, "{input}");
+        }
+
+        for (input, reminders, body) in [
+            (
+                "dentist at 5pm remind me 15 min before",
+                vec![15],
+                "dentist",
+            ),
+            ("exam friday reminder 1 day before", vec![1440], "exam"),
+            ("call at 6pm 10 minutes before", vec![10], "call"),
+            ("flight alert 2 hours before", vec![120], "flight"),
+        ] {
+            let p = detect(input, today, &[]).parsed;
+            assert_eq!(p.reminders, reminders, "{input}");
+            assert_eq!(p.body, body, "{input}");
+        }
+        // "3 days before" without a reminder word is still a show-from.
+        let p = detect("pay rent friday show 3 days before", today, &[]).parsed;
+        assert!(p.reminders.is_empty());
+        assert_eq!(p.threshold.as_deref(), Some("-3d"));
+
+        let p = detect(
+            "gym monday at 7am for 1h remind me 15 min before",
+            today,
+            &[],
+        )
+        .parsed;
+        assert_eq!(
+            format_as_todo_txt(&p),
+            "gym plan:2026-10-05 at:07:00 dur:1h remind:15m"
+        );
+        // And the tags read back.
+        let p = detect("gym plan:2026-10-05 dur:1h30m remind:15m,1d", today, &[]).parsed;
+        assert_eq!(p.planned, Some(d("2026-10-05")));
+        assert_eq!(p.duration, Some(90));
+        assert_eq!(p.reminders, vec![15, 1440]);
+        assert_eq!(p.body, "gym");
     }
 
     #[test]
@@ -1640,7 +1904,7 @@ mod tests {
         let input = "Pay rent monthly on the first of the month, show the todo 3 days before the due date. It's part of project home and context bank";
         let parsed = try_parse(input, today).unwrap();
         assert_eq!(parsed.body, "Pay rent");
-        assert_eq!(parsed.due, Some(d("2026-06-01")));
+        assert_eq!(parsed.planned, Some(d("2026-06-01")));
         assert_eq!(parsed.rec.as_deref(), Some("+1m"));
         assert_eq!(parsed.threshold.as_deref(), Some("-3d"));
         assert_eq!(parsed.projects, vec!["home".to_string()]);
@@ -1654,7 +1918,7 @@ mod tests {
         let input = "Pay rent monthly on the first of the month, show the todo 3 days before the due date. It's part of project home and context bank";
         let parsed = try_parse(input, today).unwrap();
         let out = format_as_todo_txt(&parsed);
-        assert_eq!(out, "Pay rent +home @bank due:2026-06-01 rec:+1m t:-3d");
+        assert_eq!(out, "Pay rent +home @bank plan:2026-06-01 rec:+1m t:-3d");
     }
 
     #[test]
@@ -1664,7 +1928,7 @@ mod tests {
         // the multibyte 'я' and panicking. The whole app crashed on save.
         let today = d("2026-05-17");
         let parsed = try_parse("Приготовить ужин (на 2 дня) today", today).unwrap();
-        assert_eq!(parsed.due, Some(today));
+        assert_eq!(parsed.planned, Some(today));
         assert_eq!(parsed.body, "Приготовить ужин (на 2 дня)");
     }
 
@@ -1673,7 +1937,7 @@ mod tests {
         let today = d("2026-05-11");
         let parsed = try_parse("Buy milk tomorrow", today).unwrap();
         assert_eq!(parsed.body, "Buy milk");
-        assert_eq!(parsed.due, Some(d("2026-05-12")));
+        assert_eq!(parsed.planned, Some(d("2026-05-12")));
         assert_eq!(parsed.rec, None);
         assert_eq!(parsed.threshold, None);
     }
@@ -1688,7 +1952,7 @@ mod tests {
         .unwrap();
         assert_eq!(parsed.body, "Call mom");
         assert_eq!(parsed.rec.as_deref(), Some("+1w"));
-        assert_eq!(parsed.due, Some(d("2026-05-15"))); // next Friday
+        assert_eq!(parsed.planned, Some(d("2026-05-15"))); // next Friday
         assert_eq!(parsed.projects, vec!["family".to_string()]);
     }
 
@@ -1721,7 +1985,11 @@ mod tests {
             let parsed =
                 try_parse(input, today).unwrap_or_else(|| panic!("no parse for {input:?}"));
             assert_eq!(parsed.body, "Pay rent", "input: {input:?}");
-            assert!(parsed.due.is_some(), "input: {input:?}");
+            // "due", "by" and "before" set the deadline; the others when
+            // it's planned.
+            let deadline = ["due", "by", "before"].iter().any(|m| input.contains(m));
+            assert_eq!(parsed.due.is_some(), deadline, "input: {input:?}");
+            assert_eq!(parsed.planned.is_some(), !deadline, "input: {input:?}");
         }
     }
 
@@ -1744,7 +2012,7 @@ mod tests {
         assert_eq!(parsed.body, "Submit timesheet");
         assert_eq!(parsed.rec.as_deref(), Some("+2w"));
         assert_eq!(parsed.threshold.as_deref(), Some("-1d"));
-        assert_eq!(parsed.due, Some(d("2026-05-15")));
+        assert_eq!(parsed.planned, Some(d("2026-05-15")));
     }
 
     #[test]
@@ -1764,7 +2032,7 @@ mod tests {
     fn first_of_the_month_rolls_forward() {
         let today = d("2026-05-11");
         let parsed = try_parse("Pay rent on the first of the month", today).unwrap();
-        assert_eq!(parsed.due, Some(d("2026-06-01")));
+        assert_eq!(parsed.planned, Some(d("2026-06-01")));
     }
 
     #[test]
@@ -1772,7 +2040,7 @@ mod tests {
         let today = d("2026-05-11"); // Monday
         let parsed = try_parse("Standup every monday", today).unwrap();
         assert_eq!(parsed.rec.as_deref(), Some("+1w"));
-        assert_eq!(parsed.due, Some(d("2026-05-18")));
+        assert_eq!(parsed.planned, Some(d("2026-05-18")));
     }
 
     #[test]
@@ -1840,7 +2108,7 @@ mod tests {
         let today = d("2026-05-11");
         let parsed = try_parse("Fix bug high priority tomorrow", today).unwrap();
         assert_eq!(parsed.priority, Some('A'));
-        assert_eq!(parsed.due, Some(d("2026-05-12")));
+        assert_eq!(parsed.planned, Some(d("2026-05-12")));
         assert_eq!(parsed.body, "Fix bug");
     }
 
@@ -1854,8 +2122,8 @@ mod tests {
         let parsed = try_parse("(A) Buy milk tomorrow", today).unwrap();
         assert_eq!(parsed.priority, Some('A'));
         assert_eq!(parsed.body, "Buy milk");
-        assert_eq!(parsed.due, Some(d("2026-05-12")));
-        assert_eq!(format_as_todo_txt(&parsed), "(A) Buy milk due:2026-05-12");
+        assert_eq!(parsed.planned, Some(d("2026-05-12")));
+        assert_eq!(format_as_todo_txt(&parsed), "(A) Buy milk plan:2026-05-12");
     }
 
     #[test]
@@ -1951,11 +2219,11 @@ mod tests {
             ]
         );
         assert_eq!(det.parsed.body, "call anna");
-        assert_eq!(det.parsed.due, Some(d("2026-09-25")));
+        assert_eq!(det.parsed.planned, Some(d("2026-09-25")));
         assert_eq!(det.parsed.time, Some((18, 0)));
         assert_eq!(
             det.to_todo_txt(),
-            "call anna +work @calls due:2026-09-25 at:18:00"
+            "call anna +work @calls plan:2026-09-25 at:18:00"
         );
     }
 
@@ -1973,11 +2241,11 @@ mod tests {
     fn a_rejected_phrase_stays_in_the_body() {
         let text = "notes from friday meeting";
         let det = detect(text, d("2026-09-21"), &[]);
-        assert_eq!(det.parsed.due, Some(d("2026-09-25")));
+        assert_eq!(det.parsed.planned, Some(d("2026-09-25")));
 
         let rejected = [(FieldKind::Date, "friday".to_string())];
         let det = detect(text, d("2026-09-21"), &rejected);
-        assert!(det.parsed.due.is_none());
+        assert!(det.parsed.planned.is_none());
         assert!(det.is_empty());
         assert_eq!(det.parsed.body, "notes from friday meeting");
     }
@@ -2039,12 +2307,16 @@ mod tests {
         ] {
             let det = detect(text, today, &[]);
             assert_eq!(det.parsed.rec.as_deref(), Some("+1w"), "{text}");
-            assert_eq!(det.parsed.due, Some(d("2026-10-09")), "next friday: {text}");
+            assert_eq!(
+                det.parsed.planned,
+                Some(d("2026-10-09")),
+                "next friday: {text}"
+            );
             assert_eq!(det.parsed.body, "call ana", "{text}");
         }
         let det = detect("water plants every 2 weeks on monday", today, &[]);
         assert_eq!(det.parsed.rec.as_deref(), Some("+2w"));
-        assert_eq!(det.parsed.due, Some(d("2026-10-05")));
+        assert_eq!(det.parsed.planned, Some(d("2026-10-05")));
     }
 
     #[test]
@@ -2053,7 +2325,7 @@ mod tests {
         let det = detect("call ana at 6 every week on fridays", d("2026-10-03"), &[]);
         assert_eq!(det.parsed.time, Some((18, 0)));
         assert_eq!(det.parsed.rec.as_deref(), Some("+1w"));
-        assert_eq!(det.parsed.due, Some(d("2026-10-09")));
+        assert_eq!(det.parsed.planned, Some(d("2026-10-09")));
         assert_eq!(det.parsed.body, "call ana");
     }
 }

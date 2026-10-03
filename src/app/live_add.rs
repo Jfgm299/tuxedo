@@ -25,10 +25,13 @@ use crate::core::AddOutcome as CoreAdd;
 use crate::nl::{self, DetectedSpan, Detection, FieldKind};
 
 /// The chip row, in display order. `ShowFrom` only appears once detected.
-pub const CHIP_ORDER: [FieldKind; 7] = [
+pub const CHIP_ORDER: [FieldKind; 10] = [
     FieldKind::Date,
     FieldKind::Time,
+    FieldKind::Duration,
     FieldKind::Repeat,
+    FieldKind::Deadline,
+    FieldKind::Reminder,
     FieldKind::Project,
     FieldKind::Context,
     FieldKind::Priority,
@@ -49,7 +52,10 @@ pub struct Chip {
 /// canonical token. They override what the text says.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Picked {
+    pub planned: Option<NaiveDate>,
     pub due: Option<NaiveDate>,
+    pub duration: Option<u32>,
+    pub reminders: Option<Vec<u32>>,
     pub threshold: Option<String>,
     pub rec: Option<String>,
     pub time: Option<(u32, u32)>,
@@ -59,7 +65,10 @@ pub struct Picked {
 impl Picked {
     fn has(&self, kind: FieldKind) -> bool {
         match kind {
-            FieldKind::Date => self.due.is_some(),
+            FieldKind::Date => self.planned.is_some(),
+            FieldKind::Deadline => self.due.is_some(),
+            FieldKind::Duration => self.duration.is_some(),
+            FieldKind::Reminder => self.reminders.is_some(),
             FieldKind::ShowFrom => self.threshold.is_some(),
             FieldKind::Repeat => self.rec.is_some(),
             FieldKind::Time => self.time.is_some(),
@@ -70,7 +79,10 @@ impl Picked {
 
     fn clear(&mut self, kind: FieldKind) {
         match kind {
-            FieldKind::Date => self.due = None,
+            FieldKind::Date => self.planned = None,
+            FieldKind::Deadline => self.due = None,
+            FieldKind::Duration => self.duration = None,
+            FieldKind::Reminder => self.reminders = None,
             FieldKind::ShowFrom => self.threshold = None,
             FieldKind::Repeat => self.rec = None,
             FieldKind::Time => self.time = None,
@@ -82,7 +94,12 @@ impl Picked {
     /// Copy the field `kind` from a parse result.
     fn take_from(&mut self, kind: FieldKind, p: &nl::ParsedNl) {
         match kind {
-            FieldKind::Date => self.due = p.due,
+            FieldKind::Date => self.planned = p.planned,
+            FieldKind::Deadline => self.due = p.due,
+            FieldKind::Duration => self.duration = p.duration,
+            FieldKind::Reminder => {
+                self.reminders = (!p.reminders.is_empty()).then(|| p.reminders.clone());
+            }
             FieldKind::ShowFrom => self.threshold = p.threshold.clone(),
             FieldKind::Repeat => self.rec = p.rec.clone(),
             FieldKind::Time => self.time = p.time,
@@ -116,8 +133,17 @@ impl App {
         let mut det = nl::detect(self.draft.text(), today, &self.draft.live.rejected);
         let picked = &self.draft.live.picked;
         let p = &mut det.parsed;
+        if picked.planned.is_some() {
+            p.planned = picked.planned;
+        }
         if picked.due.is_some() {
             p.due = picked.due;
+        }
+        if picked.duration.is_some() {
+            p.duration = picked.duration;
+        }
+        if let Some(r) = &picked.reminders {
+            p.reminders = r.clone();
         }
         if picked.threshold.is_some() {
             p.threshold = picked.threshold.clone();
@@ -132,8 +158,8 @@ impl App {
             p.priority = picked.priority;
         }
         // A picked "every fri, sat, sun" still starts on the first of them.
-        if p.due.is_none() {
-            p.due = p.rec.as_deref().and_then(|r| nl::first_rec_day(r, today));
+        if p.planned.is_none() {
+            p.planned = p.rec.as_deref().and_then(|r| nl::first_rec_day(r, today));
         }
         det
     }
@@ -156,9 +182,17 @@ impl App {
             .iter()
             .filter_map(|&kind| {
                 let value = match kind {
-                    FieldKind::Date => p
-                        .due
-                        .map(|d| d.format("%a %-d %b").to_string().to_lowercase()),
+                    FieldKind::Date => p.planned.map(short_date),
+                    FieldKind::Deadline => p.due.map(|d| format!("by {}", short_date(d))),
+                    FieldKind::Duration => p.duration.map(crate::duration::describe),
+                    FieldKind::Reminder => (!p.reminders.is_empty()).then(|| {
+                        let list: Vec<String> = p
+                            .reminders
+                            .iter()
+                            .map(|m| crate::duration::describe(*m))
+                            .collect();
+                        format!("{} before", list.join(", "))
+                    }),
                     FieldKind::Time => p.time.map(|(h, m)| format!("{h:02}:{m:02}")),
                     FieldKind::Repeat => p.rec.as_deref().map(describe_rec),
                     FieldKind::Project => (!p.projects.is_empty()).then(|| p.projects.join(" ")),
@@ -295,7 +329,11 @@ impl App {
         self.draft.live.chip_focus = None;
         let has_picker = matches!(
             chip.kind,
-            FieldKind::Date | FieldKind::ShowFrom | FieldKind::Repeat | FieldKind::Priority
+            FieldKind::Date
+                | FieldKind::Deadline
+                | FieldKind::ShowFrom
+                | FieldKind::Repeat
+                | FieldKind::Priority
         );
         if has_picker && let Some(span) = chip.span {
             let det = self.live_detection();
@@ -308,21 +346,19 @@ impl App {
         }
         let picked = self.draft.live.picked.clone();
         match chip.kind {
-            FieldKind::Date | FieldKind::ShowFrom => {
-                let target = if chip.kind == FieldKind::Date {
-                    CalendarTarget::Due
-                } else {
-                    CalendarTarget::Threshold
+            FieldKind::Date | FieldKind::Deadline | FieldKind::ShowFrom => {
+                let (target, start) = match chip.kind {
+                    FieldKind::Date => (CalendarTarget::Planned, picked.planned),
+                    FieldKind::Deadline => (CalendarTarget::Due, picked.due),
+                    _ => (
+                        CalendarTarget::Threshold,
+                        picked
+                            .threshold
+                            .as_deref()
+                            .and_then(|t| NaiveDate::parse_from_str(t, "%Y-%m-%d").ok()),
+                    ),
                 };
                 self.open_calendar(target);
-                let start = if chip.kind == FieldKind::Date {
-                    picked.due
-                } else {
-                    picked
-                        .threshold
-                        .as_deref()
-                        .and_then(|t| NaiveDate::parse_from_str(t, "%Y-%m-%d").ok())
-                };
                 if let Some(d) = start
                     && let Some(DraftOverlay::Calendar(state)) = self.draft.overlay_mut()
                 {
@@ -358,6 +394,8 @@ impl App {
             FieldKind::Project => self.live_append(" +"),
             FieldKind::Context => self.live_append(" @"),
             FieldKind::Time => self.live_append(" at "),
+            FieldKind::Duration => self.live_append(" for "),
+            FieldKind::Reminder => self.live_append(" remind me "),
         }
         self.live_refresh();
     }
@@ -475,6 +513,11 @@ impl App {
         self.flash_active()?;
         self.draft.live.toast.as_deref()
     }
+}
+
+/// A date on a chip: `fri 9 oct`.
+fn short_date(d: NaiveDate) -> String {
+    d.format("%a %-d %b").to_string().to_lowercase()
 }
 
 /// `rec:` value in words: `1w` → "every week", `+2m` → "every 2 months".
@@ -622,7 +665,7 @@ mod tests {
         let mut app = build_app("");
         typed(&mut app, "dentist");
         // What a picker writes into the text…
-        app.apply_kv("due", Some("2026-10-04"));
+        app.apply_kv("plan", Some("2026-10-04"));
         app.live_absorb(true);
         // …is moved out of it.
         assert_eq!(app.draft.text(), "dentist");
@@ -633,7 +676,7 @@ mod tests {
 
         assert_eq!(app.live_add(), AddOutcome::Saved);
         let raw = &app.tasks().last().expect("added").raw;
-        assert!(raw.ends_with("dentist due:2026-10-04"), "{raw}");
+        assert!(raw.ends_with("dentist plan:2026-10-04"), "{raw}");
     }
 
     #[test]

@@ -374,14 +374,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 pub fn field_icon(kind: FieldKind, nerd: bool) -> &'static str {
     match (kind, nerd) {
         (FieldKind::Date, true) => "\u{f073}",
-        (FieldKind::Time, true) => "\u{f0f3}",
+        (FieldKind::Deadline, true) => "\u{f11e}",
+        (FieldKind::Time, true) => "\u{f017}",
+        (FieldKind::Duration, true) => "\u{f252}",
+        (FieldKind::Reminder, true) => "\u{f0f3}",
         (FieldKind::Repeat, true) => "\u{f01e}",
         (FieldKind::Project, true) => "\u{f07b}",
         (FieldKind::Context, true) => "\u{f02b}",
         (FieldKind::Priority, true) => "\u{f024}",
         (FieldKind::ShowFrom, true) => "\u{f06e}",
         (FieldKind::Date, false) => "▦",
+        (FieldKind::Deadline, false) => "⇥",
         (FieldKind::Time, false) => "◷",
+        (FieldKind::Duration, false) => "⧗",
+        (FieldKind::Reminder, false) => "!",
         (FieldKind::Repeat, false) => "↻",
         (FieldKind::Project, false) => "+",
         (FieldKind::Context, false) => "@",
@@ -413,7 +419,10 @@ fn icon_alone(icon: &str, nerd: bool) -> String {
 pub fn field_color(kind: FieldKind, theme: &Theme) -> Color {
     match kind {
         FieldKind::Date => theme.due,
+        FieldKind::Deadline => theme.overdue,
         FieldKind::Time => theme.accent,
+        FieldKind::Duration => theme.pri_c,
+        FieldKind::Reminder => theme.today,
         FieldKind::Repeat => theme.pri_other,
         FieldKind::Project => theme.project,
         FieldKind::Context => theme.context,
@@ -557,8 +566,24 @@ fn render_chips(frame: &mut Frame, area: Rect, app: &App) {
     let focus = app.live_chip_focus();
     let nerd = app.prefs.nerd_icons;
     let width = |s: &str| unicode_width::UnicodeWidthStr::width(s) as u16;
+    let chips = app.live_chips();
+    // When they don't all fit, the empty ones (hints) go first; the
+    // focused one always stays.
+    let label_w = |c: &crate::app::Chip| -> u16 {
+        let icon = field_icon(c.kind, nerd);
+        let label = match &c.value {
+            Some(v) => format!(" {}{v} ", icon_gap(icon, nerd)),
+            None => icon_alone(icon, nerd),
+        };
+        width(&label) + 3
+    };
+    let total: u16 = chips.iter().map(label_w).sum();
+    let compact = total > area.width;
     let mut x = area.x;
-    for (i, chip) in app.live_chips().into_iter().enumerate() {
+    for (i, chip) in chips.into_iter().enumerate() {
+        if compact && chip.value.is_none() && focus != Some(i) {
+            continue;
+        }
         let color = match (chip.kind, chip.value.as_deref()) {
             (FieldKind::Priority, Some(v)) => v
                 .chars()
@@ -1098,6 +1123,7 @@ fn render_calendar(frame: &mut Frame, dlg: Rect, screen: Rect, app: &App) {
     let area = anchor_below_dialog(dlg, screen, popup_w, popup_h);
     frame.render_widget(Clear, area);
     let label = match state.target {
+        CalendarTarget::Planned => "PLANNED",
         CalendarTarget::Due => "DUE",
         CalendarTarget::Threshold => "THRESHOLD",
     };

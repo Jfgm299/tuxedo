@@ -273,7 +273,7 @@ mod tests {
         assert!(report.error.is_none());
         assert_eq!(store.tasks().len(), 3);
         assert!(store.tasks()[1].raw.contains("Buy milk"));
-        assert_eq!(store.tasks()[1].due.as_deref(), Some("2026-05-14"));
+        assert_eq!(store.tasks()[1].planned.as_deref(), Some("2026-05-14"));
         assert!(store.tasks()[2].rec.is_some());
         let on_disk = std::fs::read_to_string(&todo_path).unwrap();
         assert!(on_disk.contains("Buy milk"));

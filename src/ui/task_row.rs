@@ -167,6 +167,13 @@ fn push_token_spans<'a>(
         spans.push(Span::styled(token, Style::default().fg(c)));
         return;
     }
+    if let Some(rest) = token.strip_prefix("plan:") {
+        spans.push(Span::styled(
+            token,
+            planned_token_style(task.done, rest, opts.today, theme),
+        ));
+        return;
+    }
     if let Some(rest) = token.strip_prefix("due:") {
         spans.push(Span::styled(
             token,
@@ -351,6 +358,25 @@ pub(crate) fn due_token_style(task_done: bool, due: &str, today: &str, theme: &T
         style = style.add_modifier(Modifier::BOLD);
     }
     style
+}
+
+/// A planned date is never "overdue" — only a deadline is. Today's stands
+/// out; past ones keep the date colour, so a late plan is still visible.
+pub(crate) fn planned_token_style(
+    task_done: bool,
+    planned: &str,
+    today: &str,
+    theme: &Theme,
+) -> Style {
+    if task_done {
+        return Style::default().fg(theme.dim);
+    }
+    let style = Style::default().fg(theme.due);
+    if planned <= today {
+        style.add_modifier(Modifier::BOLD)
+    } else {
+        style
+    }
 }
 
 pub fn due_label(due: &str, today: &str) -> String {

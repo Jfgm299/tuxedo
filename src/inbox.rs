@@ -205,7 +205,7 @@ mod tests {
     fn canonicalize_rewrites_natural_language() {
         let task = canonicalize_line("Buy milk tomorrow", today()).unwrap();
         assert!(task.raw.contains("Buy milk"));
-        assert_eq!(task.due.as_deref(), Some("2026-05-14"));
+        assert_eq!(task.planned.as_deref(), Some("2026-05-14"));
         assert_eq!(task.created_date.as_deref(), Some("2026-05-13"));
     }
 
@@ -263,7 +263,7 @@ mod tests {
         .unwrap();
         assert_eq!(task.priority, None);
         assert!(task.projects.contains(&"home".to_string()));
-        assert_eq!(task.due.as_deref(), Some("2026-06-01"));
+        assert_eq!(task.planned.as_deref(), Some("2026-06-01"));
         assert_eq!(task.rec.as_deref(), Some("+1m"));
         assert_eq!(task.threshold.as_deref(), Some("-3d"));
         assert_eq!(task.created_date.as_deref(), Some("2026-05-13"));

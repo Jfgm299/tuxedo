@@ -534,22 +534,24 @@ impl Store {
 }
 
 /// Identity of a recurring task for duplicate-spawn detection: the body with
-/// the `due:` token removed and whitespace normalized. Two occurrences of the
-/// same recurrence share this identity regardless of due date.
+/// the `due:` and `plan:` tokens removed and whitespace normalized. Two
+/// occurrences of the same recurrence share this identity regardless of
+/// their dates.
 fn recurrence_identity(raw: &str) -> String {
     todo::body_after_priority(raw)
         .split_whitespace()
-        .filter(|tok| !tok.starts_with("due:"))
+        .filter(|tok| !tok.starts_with("due:") && !tok.starts_with("plan:"))
         .collect::<Vec<_>>()
         .join(" ")
 }
 
 /// Build the raw line for the next occurrence of a recurring task.
 ///
-/// Inputs are the pre-completion `raw`, the pre-completion `due:` value
-/// (strict-mode anchor), the parsed `RecSpec`, and `today`. Strict mode anchors
-/// on the previous due date when present and parseable, else today + interval.
-/// Date overflow returns `None` so the caller skips spawning.
+/// The rule moves the task's date: its deadline (`due:`) when it has one,
+/// else its planned date (`plan:`); a task with both keeps the gap between
+/// them. Strict mode (`rec:+…`) anchors on that date, otherwise on today. A
+/// task with no date gets a planned one. Date overflow returns `None` so
+/// the caller skips spawning.
 fn build_next_instance(
     raw: &str,
     due: Option<&str>,
@@ -557,35 +559,63 @@ fn build_next_instance(
     today: &str,
 ) -> Option<String> {
     use chrono::NaiveDate;
-    let today_date = NaiveDate::parse_from_str(today, "%Y-%m-%d").ok()?;
+    let parse = |d: &str| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok();
+    let today_date = parse(today)?;
+    let body = todo::body_after_priority(raw);
+    // A `due:` that doesn't parse still makes this a deadline task; it's
+    // replaced by a valid date.
+    let has_due = due.is_some();
+    let due = due.and_then(parse);
+    let planned = todo::find_kv(body, todo::PLAN_KEY).and_then(|d| parse(&d));
+    let main = due.or(planned);
     let anchor = if spec.strict {
-        due.and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
-            .unwrap_or(today_date)
+        main.unwrap_or(today_date)
     } else {
         today_date
     };
-    let next_due = recurrence::advance(anchor, spec)?;
-    let next_due_str = next_due.format("%Y-%m-%d").to_string();
+    let next_main = recurrence::advance(anchor, spec)?;
+    let shift = |d: NaiveDate| -> Option<NaiveDate> {
+        let m = main?;
+        let gap = d.signed_duration_since(m);
+        next_main.checked_add_signed(gap)
+    };
+    let (next_due, next_planned) = match (has_due, planned) {
+        (true, Some(p)) => (Some(next_main), shift(p).or(Some(next_main))),
+        (true, None) => (Some(next_main), None),
+        (false, _) => (None, Some(next_main)),
+    };
+    let fmt = |d: NaiveDate| d.format("%Y-%m-%d").to_string();
 
-    let body = todo::body_after_priority(raw);
-
-    // Substitute the first `due:` with the new value, drop later `due:` dups.
+    // Substitute the first `due:` / `plan:` with the new values, drop later
+    // duplicates, and append whichever wasn't there.
     let mut out_tokens: Vec<String> = Vec::new();
-    let mut due_seen = false;
+    let (mut due_seen, mut plan_seen) = (false, false);
     for tok in body.split_whitespace() {
         if let Some(rest) = tok.strip_prefix("due:")
             && !rest.is_empty()
         {
-            if !due_seen {
-                out_tokens.push(format!("due:{next_due_str}"));
-                due_seen = true;
+            if !due_seen && let Some(d) = next_due {
+                out_tokens.push(format!("due:{}", fmt(d)));
             }
+            due_seen = true;
+            continue;
+        }
+        if let Some(rest) = tok.strip_prefix("plan:")
+            && !rest.is_empty()
+        {
+            if !plan_seen && let Some(d) = next_planned {
+                out_tokens.push(format!("plan:{}", fmt(d)));
+            }
+            plan_seen = true;
             continue;
         }
         out_tokens.push(tok.to_string());
     }
-    if !due_seen {
-        out_tokens.push(format!("due:{next_due_str}"));
+    if !due_seen && let Some(d) = next_due {
+        out_tokens.push(format!("due:{}", fmt(d)));
+    }
+    if !plan_seen && let Some(d) = next_planned {
+        out_tokens.push(format!("plan:{}", fmt(d)));
     }
 
     let prefix = match todo::parse_line(raw).ok().and_then(|t| t.priority) {
@@ -644,8 +674,26 @@ mod tests {
         store.set_today("2026-05-09".to_string());
         store.toggle_complete(0);
         assert_eq!(store.tasks().len(), 2);
-        assert_eq!(store.tasks()[1].due.as_deref(), Some("2026-05-16"));
+        // No date: the next one is planned a week on.
+        assert_eq!(store.tasks()[1].planned.as_deref(), Some("2026-05-16"));
         assert_eq!(store.tasks()[1].rec.as_deref(), Some("1w"));
+    }
+
+    #[test]
+    fn recurrence_moves_the_planned_date_and_keeps_the_gap_to_the_deadline() {
+        let mut store = build_store("Gym plan:2026-05-11 rec:+1w:mon,wed,fri\n");
+        store.toggle_complete(0);
+        assert_eq!(store.tasks()[1].planned.as_deref(), Some("2026-05-13"));
+        assert!(store.tasks()[1].due.is_none());
+
+        let mut store = build_store("Essay plan:2026-05-10 due:2026-05-12 rec:+1w\n");
+        store.toggle_complete(0);
+        assert_eq!(store.tasks()[1].due.as_deref(), Some("2026-05-19"));
+        assert_eq!(
+            store.tasks()[1].planned.as_deref(),
+            Some("2026-05-17"),
+            "two days before"
+        );
     }
 
     #[test]
@@ -728,7 +776,7 @@ mod tests {
         assert_eq!(store.tasks().len(), 1);
         assert!(store.tasks()[0].raw.contains("Buy milk"));
         // build_store today = 2026-05-06.
-        assert_eq!(store.tasks()[0].due.as_deref(), Some("2026-05-07"));
+        assert_eq!(store.tasks()[0].planned.as_deref(), Some("2026-05-07"));
     }
 
     #[test]
@@ -893,7 +941,7 @@ mod tests {
         assert_eq!(store.tasks()[2].due.as_deref(), Some("2026-05-15"));
         assert_eq!(store.tasks()[3].raw, "b");
         assert!(store.tasks()[4].done);
-        assert_eq!(store.tasks()[5].due.as_deref(), Some("2026-05-16"));
+        assert_eq!(store.tasks()[5].planned.as_deref(), Some("2026-05-16"));
     }
 
     #[test]

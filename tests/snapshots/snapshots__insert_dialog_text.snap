@@ -16,9 +16,9 @@ expression: buffer_to_text(&buf)
  CONTEXTS                   7   (C) Order new running shoes +healt deck +work @laptop               
    @errand╭──────────────────────────────────────────────────────────────────────────────╮          
    @home  │                                                                              │          
-   @laptop│  > ⚑ (A) Buy milk  +groceries   @errands  ▦ due:2026-05-10▏            ↑     │          
+   @laptop│  > ⚑ (A) Buy milk  +groceries   @errands  ⇥ due:2026-05-10▏            ↑     │          
    @phone │                                                                              │          
-          │    ▦ sun 10 may      ◷       ↻      + groceries     @ errands     ⚑ (A)      │          
+          │    ⇥ by sun 10 may     + groceries     @ errands     ⚑ (A)                   │          
           │                                                                              │          
           ╰──────────────────────────────────────────────────────────────────────────────╯          
                            14       Plan Saturday hike with K. @ph                                  

@@ -51,6 +51,13 @@ pub struct Task {
     pub projects: Vec<String>,
     pub contexts: Vec<String>,
     pub due: Option<String>,
+    /// When you plan to do it (`plan:YYYY-MM-DD`), as opposed to `due`, the
+    /// deadline. "on friday" sets this one, "by friday" sets `due`.
+    pub planned: Option<String>,
+    /// How long it takes (`dur:`), e.g. `30m`, `1h`, `1h30m`.
+    pub duration: Option<String>,
+    /// Reminders before its time (`remind:`), e.g. `15m` or `15m,1d`.
+    pub reminders: Option<String>,
     /// Raw value of the `rec:` tag if present, e.g. `"+1m"` or `"3b"`. Stored
     /// as the unparsed string so a malformed value round-trips intact through
     /// `serialize` — only the spawn-on-complete code path needs to parse it.
@@ -63,6 +70,18 @@ pub struct Task {
     /// Starred with a `star:1` tag (see [`STAR_KEY`]): floats to the top of
     /// its priority/due group in the list, above unstarred tasks.
     pub starred: bool,
+}
+
+/// Tag keys of the planned date, duration and reminders.
+pub const PLAN_KEY: &str = "plan";
+pub const DURATION_KEY: &str = "dur";
+pub const REMIND_KEY: &str = "remind";
+
+impl Task {
+    /// The date the task is shown on: when it's planned, else its deadline.
+    pub fn date(&self) -> Option<&str> {
+        self.planned.as_deref().or(self.due.as_deref())
+    }
 }
 
 /// The `key:value` key marking a starred task, e.g. `star:1`. A plain
@@ -109,6 +128,9 @@ pub fn parse_line(raw: &str) -> Result<Task, ParseError> {
     let projects = collect_tokens(rest, '+');
     let contexts = collect_tokens(rest, '@');
     let due = find_kv(rest, "due");
+    let planned = find_kv(rest, PLAN_KEY);
+    let duration = find_kv(rest, DURATION_KEY);
+    let reminders = find_kv(rest, REMIND_KEY);
     let rec = find_kv(rest, "rec");
     let threshold = find_kv(rest, "t");
     let notes = find_quoted_kv(rest, "note");
@@ -126,6 +148,9 @@ pub fn parse_line(raw: &str) -> Result<Task, ParseError> {
         projects,
         contexts,
         due,
+        planned,
+        duration,
+        reminders,
         rec,
         threshold,
         notes,

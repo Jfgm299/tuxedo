@@ -72,6 +72,62 @@ fn build_lines<'a>(
             ),
         ],
     ));
+    if let Some(planned) = &t.planned {
+        rows.push(line_panel(
+            theme,
+            vec![
+                Span::styled(" planned   ", Style::default().fg(theme.dim)),
+                Span::styled(planned.as_str(), Style::default().fg(theme.fg)),
+            ],
+        ));
+    }
+    let raw_body = crate::todo::body_after_priority(&t.raw);
+    if let Some(time) = crate::todo::find_kv(raw_body, "at") {
+        let mut value = time;
+        if let Some(m) = t
+            .duration
+            .as_deref()
+            .and_then(crate::duration::parse_minutes)
+        {
+            value.push_str(&format!("  for {}", crate::duration::describe(m)));
+        }
+        rows.push(line_panel(
+            theme,
+            vec![
+                Span::styled(" time      ", Style::default().fg(theme.dim)),
+                Span::styled(value, Style::default().fg(theme.fg)),
+            ],
+        ));
+    } else if let Some(m) = t
+        .duration
+        .as_deref()
+        .and_then(crate::duration::parse_minutes)
+    {
+        rows.push(line_panel(
+            theme,
+            vec![
+                Span::styled(" takes     ", Style::default().fg(theme.dim)),
+                Span::styled(crate::duration::describe(m), Style::default().fg(theme.fg)),
+            ],
+        ));
+    }
+    if let Some(list) = t
+        .reminders
+        .as_deref()
+        .and_then(crate::duration::parse_reminders)
+    {
+        let text: Vec<String> = list.iter().map(|m| crate::duration::describe(*m)).collect();
+        rows.push(line_panel(
+            theme,
+            vec![
+                Span::styled(" remind    ", Style::default().fg(theme.dim)),
+                Span::styled(
+                    format!("{} before", text.join(", ")),
+                    Style::default().fg(theme.fg),
+                ),
+            ],
+        ));
+    }
     if let Some(due) = &t.due {
         rows.push(line_panel(
             theme,

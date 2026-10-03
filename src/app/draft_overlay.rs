@@ -29,6 +29,7 @@ use crate::threshold::{self, ThresholdSpec};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlashKind {
+    Planned,
     Due,
     Recurrence,
     Threshold,
@@ -49,8 +50,14 @@ pub struct SlashEntry {
 /// when the filter is empty; `slash_matches` re-sorts only via the filter.
 pub const SLASH_ENTRIES: &[SlashEntry] = &[
     SlashEntry {
+        label: "Planned",
+        description: "when you'll do it",
+        cmd: "/plan",
+        kind: SlashKind::Planned,
+    },
+    SlashEntry {
         label: "Due date",
-        description: "when this needs doing",
+        description: "the deadline",
         cmd: "/due",
         kind: SlashKind::Due,
     },
@@ -100,6 +107,9 @@ pub struct SlashMenuState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarTarget {
+    /// The planned date (`plan:`).
+    Planned,
+    /// The deadline (`due:`).
     Due,
     Threshold,
 }
@@ -239,9 +249,17 @@ impl App {
         }
         let colon_pos = cursor - 1;
         // Try longest keys first so `rec` doesn't shadow a hypothetical `re`.
-        for (key, kind) in [("rec", KvKind::Rec), ("due", KvKind::Due), ("t", KvKind::T)] {
+        for (key, kind) in [
+            ("plan", KvKind::Plan),
+            ("rec", KvKind::Rec),
+            ("due", KvKind::Due),
+            ("t", KvKind::T),
+        ] {
             if let Some(key_start) = match_key_before(text, colon_pos, key) {
                 match kind {
+                    KvKind::Plan => {
+                        self.open_calendar_anchored(CalendarTarget::Planned, Some(key_start));
+                    }
                     KvKind::Due => {
                         self.open_calendar_anchored(CalendarTarget::Due, Some(key_start));
                     }
@@ -378,6 +396,7 @@ impl App {
         self.draft.replace_token(anchor, end, "");
         // Dispatch.
         match kind {
+            SlashKind::Planned => self.open_calendar(CalendarTarget::Planned),
             SlashKind::Due => self.open_calendar(CalendarTarget::Due),
             SlashKind::Threshold => self.open_calendar(CalendarTarget::Threshold),
             // With the builder disabled the entry still does something useful:
@@ -431,6 +450,7 @@ impl App {
     /// a duplicate empty token behind.
     pub fn open_calendar_anchored(&mut self, target: CalendarTarget, anchor: Option<usize>) {
         let existing = match target {
+            CalendarTarget::Planned => find_kv_value(self.draft.text(), "plan"),
             CalendarTarget::Due => find_kv_value(self.draft.text(), "due"),
             CalendarTarget::Threshold => find_kv_value(self.draft.text(), "t"),
         };
@@ -510,6 +530,7 @@ impl App {
         let date_str = s.focused.format("%Y-%m-%d").to_string();
         self.draft.set_overlay(None);
         let key = match target {
+            CalendarTarget::Planned => "plan",
             CalendarTarget::Due => "due",
             CalendarTarget::Threshold => "t",
         };
@@ -533,6 +554,7 @@ impl App {
         let anchor = s.anchor;
         self.draft.set_overlay(None);
         let key = match target {
+            CalendarTarget::Planned => "plan",
             CalendarTarget::Due => "due",
             CalendarTarget::Threshold => "t",
         };
@@ -565,6 +587,7 @@ impl App {
             (anchor, s.target)
         };
         let key = match target {
+            CalendarTarget::Planned => "plan",
             CalendarTarget::Due => "due",
             CalendarTarget::Threshold => "t",
         };
@@ -866,6 +889,7 @@ impl App {
 
 #[derive(Debug, Clone, Copy)]
 enum KvKind {
+    Plan,
     Due,
     T,
     Rec,
@@ -1585,7 +1609,7 @@ mod tests {
     #[test]
     fn end_to_end_flow_writes_full_task() {
         // Simulates the full add-task flow with the slash menu:
-        //   type body → `/` → /due → calendar T → Enter → save.
+        //   type body → `/` → /plan → calendar T → Enter → save.
         // The final task line must round-trip through `parse_line` with the
         // expected metadata fields populated.
         let mut app = build_app("");
@@ -1596,7 +1620,7 @@ mod tests {
         app.draft_insert_char(' ');
         app.draft_insert_char('/');
         app.maybe_open_slash_menu();
-        // Default selection is "Due date".
+        // Default selection is "Planned".
         app.slash_accept();
         assert!(matches!(
             app.draft.overlay(),
@@ -1606,13 +1630,13 @@ mod tests {
         app.calendar_set_relative(1);
         app.calendar_accept();
         assert!(app.draft.overlay().is_none());
-        assert_eq!(app.draft.text(), "Schedule team offsite due:2026-05-07");
+        assert_eq!(app.draft.text(), "Schedule team offsite plan:2026-05-07");
 
         // Saving runs through `parse_line` and prepends today as creation
         // date. After save the task list grows by one with the expected fields.
         app.add_from_draft();
         let task = app.tasks().last().expect("task added");
-        assert_eq!(task.due.as_deref(), Some("2026-05-07"));
+        assert_eq!(task.planned.as_deref(), Some("2026-05-07"));
         assert_eq!(task.created_date.as_deref(), Some("2026-05-06"));
         assert!(task.raw.contains("Schedule team offsite"));
     }
