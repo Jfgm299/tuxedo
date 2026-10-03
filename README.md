@@ -651,6 +651,7 @@ todo.txt — review or tweak it, then Enter again to save.
 | `Submit timesheet every other friday show 1 day before` | `Submit timesheet due:2026-05-15 rec:+2w t:-1d` |
 | `Daily standup high priority` | `(A) standup rec:+1d` |
 | `Gym every mon, wed and fri at 7am` | `Gym due:2026-05-13 rec:+1w:mon,wed,fri at:07:00` |
+| `Swim every other monday, tuesday` | `Swim due:2026-05-12 rec:+2w:mon,tue` |
 | `Annual review April 15 +work @office` | `Annual review +work @office due:2027-04-15` |
 
 Recognized vocabulary:

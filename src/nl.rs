@@ -877,6 +877,13 @@ fn parse_every_phrase(
             return None;
         }
         let w2 = scratch.word_lc(words[i + 2]);
+        // "every other monday, wednesday and friday".
+        if let Some((mask, count)) = weekday_list(scratch, words, i + 2)
+            && mask.count_ones() > 1
+        {
+            let days = crate::recurrence::format_days(mask);
+            return Some((format!("+2w:{days}"), 2 + count, None));
+        }
         if let Some(wd) = parse_weekday(w2) {
             return Some(("+2w".to_string(), 3, Some(wd)));
         }
