@@ -48,6 +48,23 @@ pub struct DraftState {
     /// user is just editing text.
     overlay: Option<DraftOverlay>,
     input_mode: DialogInputMode,
+    /// Live-capture state of the add dialog (see `app/live_add.rs`).
+    pub(crate) live: LiveState,
+}
+
+/// What the add dialog remembers about its live detection between
+/// keystrokes.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct LiveState {
+    /// Detections the user turned back into plain text.
+    pub(crate) rejected: Vec<crate::nl::Rejection>,
+    /// Detected phrases in the order they appeared, newest last: what
+    /// `Ctrl+Z` undoes.
+    pub(crate) seen: Vec<crate::nl::Rejection>,
+    /// The chip `Tab` moved to, if focus is on the chip row.
+    pub(crate) chip_focus: Option<usize>,
+    /// Title of the task just added, for the confirmation toast.
+    pub(crate) toast: Option<String>,
 }
 
 impl DraftState {
@@ -93,6 +110,10 @@ impl DraftState {
         self.reset_autocomplete();
         self.overlay = None;
         self.input_mode = DialogInputMode::Insert;
+        self.live = LiveState {
+            toast: self.live.toast.take(),
+            ..LiveState::default()
+        };
     }
 
     /// Replace the text and park the cursor at the end. Used when entering
@@ -105,6 +126,7 @@ impl DraftState {
         self.reset_autocomplete();
         self.overlay = None;
         self.input_mode = mode;
+        self.live = LiveState::default();
     }
 
     pub fn insert_char(&mut self, c: char) {

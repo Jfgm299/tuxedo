@@ -120,9 +120,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Overlays
     match app.mode {
         Mode::Insert => {
-            let dlg_w: u16 = (u32::from(center_area.width) * 4 / 5)
+            // Sized from the whole screen, not the centre column: the live
+            // capture's chip row needs the room, and the dialog floats over
+            // the sidebars anyway.
+            let dlg_w: u16 = (u32::from(area.width) * 4 / 5)
                 .clamp(u32::from(DIALOG_MIN_W), u32::from(DIALOG_MAX_W))
-                as u16;
+                .min(u32::from(area.width.saturating_sub(2))) as u16;
             let dlg = centered_in(area, dlg_w, DIALOG_H);
             frame.render_widget(Clear, dlg);
             dialog::render(frame, dlg, app);

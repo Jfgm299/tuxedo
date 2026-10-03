@@ -14,23 +14,23 @@ expression: buffer_to_text(&buf)
    +travel           1     (2)  PRIORITY C  ──────────────────────                                  
                             6   (C) Pay quarterly estimated taxes  (A) 2026-05-01 Finish Q2 board   
  CONTEXTS                   7   (C) Order new running shoes +healt deck +work @laptop               
-   @errands          4     (8)╭ ADD TASK ────────────────────────────╮:2026-05-06                   
-   @home             4      8 │                                      │                              
-   @laptop           4      9 │  › edule team offsite +work @phone /█│                              
-   @phone            3     10 │  ok · 1 +project 1 @context          │                              
-                           11 │                                      │                              
-                           12 │  format: (A) Buy milk +shop @home due│                              
-                           13 │                                      │                              
-                           14 ╰──────────────────────────────────────╯                              
-                           15     ╭──────────────────────────────────────────────────────────╮      
-                                  │ ATTACH METADATA                                          │      
-                                  │  Due date    when this needs doing                  /due │      
-                                  │  Recurrence  repeat after completing                /rec │      
-                                  │  Threshold   hide until this date                     /t │      
-                                  │  Priority    A · B · C                             /prio │      
-                                  │  + Project   attach to a project                   /proj │      
-                                  │  @ Context   tool, place or person                  /ctx │      
-                                  │                                                          │      
-                                  │  ↑↓ pick · Enter insert · Esc dismiss · type to filter   │      
-                                  ╰──────────────────────────────────────────────────────────╯      
- INSERT   Enter save · Esc normal                            15 open · 2026-05-06 · tuxedo 2026.8.1
+   @errand╭ ADD TASK ────────────────────────────────────────────────────────────────────╮          
+   @home  │                                                                              │          
+   @laptop│  › Schedule team offsite +work @phone /█                                     │          
+   @phone │   ▦   ◷   ↻   + work   @ phone   ▲                                           │          
+          │                                                                              │          
+          │  Tab chips · Ctrl+Z undo detection · Enter add · Esc                         │          
+          │                                                                              │          
+          ╰──────────────────────────────────────────────────────────────────────────────╯          
+              ╭──────────────────────────────────────────────────────────╮                          
+              │ ATTACH METADATA                                          │                          
+              │  Due date    when this needs doing                  /due │                          
+              │  Recurrence  repeat after completing                /rec │                          
+              │  Threshold   hide until this date                     /t │                          
+              │  Priority    A · B · C                             /prio │                          
+              │  + Project   attach to a project                   /proj │                          
+              │  @ Context   tool, place or person                  /ctx │                          
+              │                                                          │                          
+              │  ↑↓ pick · Enter insert · Esc dismiss · type to filter   │                          
+              ╰──────────────────────────────────────────────────────────╯                          
+ INSERT   type naturally: tomorrow, at 6pm, every week, +proj15 open · 2026-05-06 · tuxedo 2026.8.1

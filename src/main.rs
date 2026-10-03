@@ -1053,6 +1053,11 @@ fn apply_to_draft(app: &mut App, key: KeyEvent) -> DraftEffect {
 
 fn handle_insert_normal(app: &mut App, key: KeyEvent) {
     match key.code {
+        // Live capture: save and stay, ready to type the next task.
+        KeyCode::Enter if app.live_add_active() => {
+            app.live_add();
+            app.draft.set_input_mode(DialogInputMode::Insert);
+        }
         KeyCode::Enter => {
             let outcome = if app.selection.editing().is_some() {
                 app.save_edit();
@@ -1098,6 +1103,52 @@ fn handle_insert_normal(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_insert(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) {
+    handle_insert_inner(app, key, keybinds);
+    // Live capture re-reads the draft after every key, whatever changed it
+    // (typing, a picker writing a token, a rejected detection).
+    if app.mode == Mode::Insert && app.live_add_active() {
+        app.live_refresh();
+    }
+}
+
+/// Live-capture keys of the add dialog (see `src/app/live_add.rs`): chip
+/// focus and navigation, rejecting/undoing detections, and Enter to save
+/// while keeping the dialog open. Returns whether the key was consumed.
+fn handle_live_add_keys(app: &mut App, key: KeyEvent) -> bool {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    if ctrl && key.code == KeyCode::Char('z') {
+        app.live_undo();
+        return true;
+    }
+    if app.live_chip_focus().is_some() {
+        match key.code {
+            KeyCode::Tab | KeyCode::Right => app.live_chip_step(true),
+            KeyCode::BackTab | KeyCode::Left => app.live_chip_step(false),
+            KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => app.live_reject_focused(),
+            KeyCode::Enter => app.live_open_focused(),
+            KeyCode::Esc => app.live_unfocus_chips(),
+            // Anything else goes back to typing.
+            _ => {
+                app.live_unfocus_chips();
+                return false;
+            }
+        }
+        return true;
+    }
+    match key.code {
+        KeyCode::Tab => {
+            app.live_focus_chips();
+            true
+        }
+        KeyCode::Enter => {
+            app.live_add();
+            true
+        }
+        _ => false,
+    }
+}
+
+fn handle_insert_inner(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) {
     if app.draft.input_mode() == DialogInputMode::Normal {
         handle_insert_normal(app, key);
         return;
@@ -1154,6 +1205,10 @@ fn handle_insert(app: &mut App, key: KeyEvent, keybinds: &KeyBindings) {
                 }
             }
         }
+    }
+
+    if app.live_add_active() && handle_live_add_keys(app, key) {
+        return;
     }
 
     match key.code {

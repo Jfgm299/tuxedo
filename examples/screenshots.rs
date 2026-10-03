@@ -176,6 +176,13 @@ fn main() -> std::io::Result<()> {
     app.pinned_notes.push(note);
     save(&app, &out.join("notes-preview.svg"))?;
 
+    // 9b. Live capture: the add dialog mid-typing, every phrase detected.
+    let mut app = starred();
+    app.mode = Mode::Insert;
+    app.draft_set_insert("call anna on friday at 6pm @calls every week".to_string());
+    app.live_refresh();
+    save(&app, &out.join("live-capture.svg"))?;
+
     // 10. The help overlay's notes page.
     let mut app = starred();
     app.help_notes_page = true;

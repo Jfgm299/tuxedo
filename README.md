@@ -54,6 +54,12 @@ the app, and **starred tasks** that stay at the top of their priority.
   page (`Tab`) with every notes and editor key.
 - **Unsaved edits are protected**: Esc, `:q` and `Z` refuse to close a note
   with unsaved changes (`:w` to save, `:q!` to discard).
+- **Live capture**: the add dialog understands natural language *while you
+  type* — "call anna on friday at 6pm @calls every week" — colouring each
+  recognised phrase and filling a row of chips (date, time, repeat, project,
+  context, priority). `Tab` walks the chips (`x` rejects a wrong detection,
+  `Enter` opens its picker), `Ctrl+Z` undoes the last detection, one `Enter`
+  adds the task and keeps the dialog open for the next one.
 - **Starred tasks**: `*` stars a task (a `star:1` tag), which floats it to
   the top of its own priority group — a starred (B) task sits above the other
   (B) tasks, never above an (A).
@@ -62,6 +68,7 @@ the app, and **starred tasks** that stay at the top of their priority.
 
 | | |
 | --- | --- |
+| **Live capture** • phrases detected as you type, chips filling in below | ![live capture](docs/screenshots/live-capture.svg) |
 | **Note editor** • a note pinned next to the list, in Insert mode: Enter continued the task list, long lines soft-wrap under their item, the border and chip show the mode. ★ marks starred tasks | ![note editor](docs/screenshots/notes-editor.svg) |
 | **Preview** • `M` renders the same note: headings, checkboxes, nested items, quotes, tables | ![note preview](docs/screenshots/notes-preview.svg) |
 | **Help, notes page** • `?` then `Tab` (or `?` from the notes list) | ![notes help](docs/screenshots/help-notes.svg) |
@@ -105,6 +112,10 @@ the app, and **starred tasks** that stay at the top of their priority.
 | | `Z` | Close the pinned note, from anywhere |
 | | `Tab` / `Shift+Tab` | Switch between pinned notes (when more than one is pinned) |
 | Task list | `*` | Star / unstar the task: top of its priority group |
+| Add dialog (`n`) | type naturally | `tomorrow`, `on friday`, `at 6pm`, `every week`, `+project`, `@context`, `high priority` are detected live |
+| | `Tab` / `Shift+Tab` | Walk the chips; on a chip `x` rejects it, `Enter` opens its picker, `Esc` returns to the text |
+| | `Ctrl+Z` | Undo the newest detection (its words become plain text); on an empty dialog, undo the task just added |
+| | `Enter` | Add the task (converted to todo.txt) and stay open for the next one |
 
 Yanks and deletes in the editor are also copied to the system clipboard via
 OSC 52 (most modern terminals; in tmux, `set -g set-clipboard on`). To paste
@@ -136,7 +147,7 @@ design rationale and implementation history of this feature.
 
 - **Pure todo.txt.** Reads and writes the [standard format](https://github.com/todotxt/todo.txt) — every line is plain text you can edit with anything else.
 - **TUI and CLI in one binary.** Run `tuxedo` for the interactive UI, or `tuxedo <command>` for a [todo.txt-cli](https://github.com/todotxt/todo.txt-cli)-compatible command line (`add`, `ls`, `do`, `pri`, `archive`, …) — scriptable, with `--json` output and `$TODO_DIR` / `$TODO_FILE` / `$DONE_FILE` support.
-- **Natural-language add.** Type prose into the add prompt — `Pay rent monthly on the first, show 3 days before due, project home` — and tuxedo rewrites it to canonical todo.txt for you to review and save. Local, offline, no AI service.
+- **Natural-language add.** Type prose into the add prompt — `Pay rent monthly on the first, show 3 days before due, project home` — and each recognised phrase lights up as you type, with chips showing what was understood; one Enter saves it as canonical todo.txt. Local, offline, no AI service.
 - **Phone capture.** Press `s` for a QR pointing at a tiny PWA on your machine's LAN — type tasks from your phone and they appear in the list. Captures land in a sibling `inbox.txt` first, so any tool that can append a line (shell, iOS Shortcuts, cron) is also a capture source.
 - **Vim keys, no surprises.** `j` / `k` to move, `dd` to delete, `gg` / `G` to jump, `u` to undo (50 levels), chord prompts (`gg`, `dd`, `fp`, `fc`) with a 600 ms window.
 - **Command palette.** `:` or `Ctrl-P` opens a fuzzy palette over every action — type a few letters, hit Enter. Same matcher as `/` search, ranked so start-of-label hits beat word-boundary hits beat mid-word hits.

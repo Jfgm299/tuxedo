@@ -31,6 +31,127 @@ pub struct ParsedNl {
     pub projects: Vec<String>,
     pub contexts: Vec<String>,
     pub priority: Option<char>,
+    /// Time of day, `(hour, minute)` in 24h — "at 6pm" → `(18, 0)`. Written
+    /// as an `at:HH:MM` tag.
+    pub time: Option<(u32, u32)>,
+}
+
+/// What a recognised phrase sets — one per chip in the add dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FieldKind {
+    /// The task's date (`due:`).
+    Date,
+    /// Time of day (`at:`).
+    Time,
+    /// Recurrence (`rec:`).
+    Repeat,
+    /// When the task starts showing (`t:`).
+    ShowFrom,
+    Project,
+    Context,
+    Priority,
+}
+
+/// One recognised phrase: the byte range it covers in the typed text and
+/// the field it sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DetectedSpan {
+    pub start: usize,
+    pub end: usize,
+    pub kind: FieldKind,
+}
+
+/// Result of [`detect`]: the structured fields plus where each one came
+/// from in the text, for live highlighting.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Detection {
+    pub parsed: ParsedNl,
+    pub spans: Vec<DetectedSpan>,
+}
+
+impl Detection {
+    /// Whether anything at all was recognised.
+    pub fn is_empty(&self) -> bool {
+        self.spans.is_empty()
+    }
+
+    /// The canonical todo.txt line this text saves as.
+    pub fn to_todo_txt(&self) -> String {
+        format_as_todo_txt(&self.parsed)
+    }
+}
+
+/// A detection the user rejected (`x` on its chip, `Ctrl+Z`): the field and
+/// the lower-cased phrase. A matching phrase is left as plain text.
+pub type Rejection = (FieldKind, String);
+
+/// Live parse for the add dialog: like [`try_parse`], but runs on any text
+/// (also text that already contains `due:` / `rec:` / `t:` / `at:` tokens,
+/// which count as detected fields too), reports the byte span of every
+/// recognised phrase, and leaves `rejected` phrases as plain words.
+pub fn detect(text: &str, today: NaiveDate, rejected: &[Rejection]) -> Detection {
+    let mut blocked = vec![false; text.len()];
+    // A rejected phrase can, once blocked, let a shorter phrase inside it be
+    // detected instead; a few rounds settle that.
+    for _ in 0..4 {
+        let detection = detect_once(text, today, &blocked);
+        let mut changed = false;
+        for span in &detection.spans {
+            let phrase = text[span.start..span.end].to_lowercase();
+            if rejected
+                .iter()
+                .any(|(kind, p)| *kind == span.kind && *p == phrase)
+            {
+                for b in &mut blocked[span.start..span.end] {
+                    *b = true;
+                }
+                changed = true;
+            }
+        }
+        if !changed {
+            return detection;
+        }
+    }
+    detect_once(text, today, &blocked)
+}
+
+fn detect_once(text: &str, today: NaiveDate, blocked: &[bool]) -> Detection {
+    let mut scratch = Scratch::new(text);
+    scratch.blocked = blocked.to_vec();
+    let mut parsed = ParsedNl::default();
+
+    pass_leading_priority(&mut scratch, &mut parsed);
+    pass_canonical(&mut scratch, &mut parsed);
+    pass_sigiled(&mut scratch, &mut parsed);
+    pass_time(&mut scratch, &mut parsed);
+    pass_threshold(&mut scratch, &mut parsed);
+    let weekday_hint = pass_recurrence(&mut scratch, &mut parsed);
+    pass_date(&mut scratch, &mut parsed, today, weekday_hint);
+    pass_project_context(&mut scratch, &mut parsed);
+    pass_priority(&mut scratch, &mut parsed);
+
+    parsed.body = scratch.remaining_cleaned();
+    let spans = merge_spans(text, std::mem::take(&mut scratch.spans));
+    Detection { parsed, spans }
+}
+
+/// Sort spans and join neighbours of the same kind separated only by
+/// whitespace, so "every other friday" is one highlighted phrase.
+fn merge_spans(text: &str, mut spans: Vec<DetectedSpan>) -> Vec<DetectedSpan> {
+    spans.sort_by_key(|s| s.start);
+    let mut out: Vec<DetectedSpan> = Vec::new();
+    for s in spans {
+        if let Some(last) = out.last_mut()
+            && last.kind == s.kind
+            && s.start >= last.end
+            && text[last.end..s.start].trim().is_empty()
+        {
+            last.end = s.end;
+            continue;
+        }
+        out.push(s);
+    }
+    out
 }
 
 /// Cheap heuristic gating the full parse. Returns `true` when the buffer
@@ -58,6 +179,7 @@ pub fn try_parse(text: &str, today: NaiveDate) -> Option<ParsedNl> {
 
     pass_leading_priority(&mut scratch, &mut parsed);
     pass_sigiled(&mut scratch, &mut parsed);
+    pass_time(&mut scratch, &mut parsed);
     pass_threshold(&mut scratch, &mut parsed);
     let weekday_hint = pass_recurrence(&mut scratch, &mut parsed);
     pass_date(&mut scratch, &mut parsed, today, weekday_hint);
@@ -71,7 +193,8 @@ pub fn try_parse(text: &str, today: NaiveDate) -> Option<ParsedNl> {
         || parsed.threshold.is_some()
         || !parsed.projects.is_empty()
         || !parsed.contexts.is_empty()
-        || parsed.priority.is_some();
+        || parsed.priority.is_some()
+        || parsed.time.is_some();
     if extracted { Some(parsed) } else { None }
 }
 
@@ -112,6 +235,9 @@ pub fn format_as_todo_txt(p: &ParsedNl) -> String {
     if let Some(t) = &p.threshold {
         out.push_str(" t:");
         out.push_str(t);
+    }
+    if let Some((h, m)) = p.time {
+        out.push_str(&format!(" at:{h:02}:{m:02}"));
     }
     out
 }
@@ -220,6 +346,13 @@ struct Scratch<'a> {
     /// one is valid in the other.
     lower: String,
     consumed: Vec<bool>,
+    /// Bytes the user rejected as a detection: never matched, but kept in
+    /// the body (unlike `consumed`).
+    blocked: Vec<bool>,
+    /// The field the running pass sets; `mark` records a span of this kind.
+    kind: Option<FieldKind>,
+    /// Every marked range with its kind, for live highlighting.
+    spans: Vec<DetectedSpan>,
     /// Cached word ranges over the original text. Recomputed via
     /// `live_words()` each pass — cheap since inputs are short.
     word_cache: Vec<(usize, usize)>,
@@ -234,6 +367,9 @@ impl<'a> Scratch<'a> {
             text,
             lower,
             consumed,
+            blocked: vec![false; text.len()],
+            kind: None,
+            spans: Vec::new(),
             word_cache,
         }
     }
@@ -241,11 +377,19 @@ impl<'a> Scratch<'a> {
     /// Returns `true` if every byte in `[start, end)` is unconsumed. A
     /// fully-consumed word counts as gone for subsequent passes.
     fn is_live(&self, start: usize, end: usize) -> bool {
-        (start..end).all(|i| !self.consumed.get(i).copied().unwrap_or(true))
+        (start..end).all(|i| {
+            !self.consumed.get(i).copied().unwrap_or(true)
+                && !self.blocked.get(i).copied().unwrap_or(false)
+        })
     }
 
     fn mark(&mut self, start: usize, end: usize) {
         let end = end.min(self.consumed.len());
+        if let Some(kind) = self.kind
+            && start < end
+        {
+            self.spans.push(DetectedSpan { start, end, kind });
+        }
         for slot in self.consumed[start..end].iter_mut() {
             *slot = true;
         }
@@ -347,8 +491,10 @@ fn compute_words(s: &str) -> Vec<(usize, usize)> {
 /// emit `"(A) Buy milk ..."` with the priority living *in the body*, and any
 /// subsequent priority word in the prose would double up the prefix.
 fn pass_leading_priority(scratch: &mut Scratch, p: &mut ParsedNl) {
+    scratch.kind = Some(FieldKind::Priority);
     let bytes = scratch.text.as_bytes();
     if bytes.len() >= 4
+        && scratch.is_live(0, 4)
         && bytes[0] == b'('
         && bytes[1].is_ascii_uppercase()
         && bytes[2] == b')'
@@ -356,6 +502,146 @@ fn pass_leading_priority(scratch: &mut Scratch, p: &mut ParsedNl) {
     {
         p.priority = Some(bytes[1] as char);
         scratch.mark(0, 4);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Canonical tokens (`due:` `t:` `rec:` `at:`), live detection only
+// ---------------------------------------------------------------------------
+
+/// Tokens already in todo.txt form — typed by hand, or written by a picker —
+/// count as detected fields too, so their chips fill in. Only values that
+/// parse are taken; anything else stays body text.
+fn pass_canonical(scratch: &mut Scratch, p: &mut ParsedNl) {
+    let words = scratch.word_cache.clone();
+    for (s, e) in words {
+        if !scratch.is_live(s, e) {
+            continue;
+        }
+        let tok = scratch.word_orig((s, e)).to_string();
+        let Some((key, value)) = tok.split_once(':') else {
+            continue;
+        };
+        let kind = match key {
+            "due" => match NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+                Ok(d) => {
+                    p.due = Some(d);
+                    FieldKind::Date
+                }
+                Err(_) => continue,
+            },
+            "t" if crate::threshold::parse_threshold(value).is_some() => {
+                p.threshold = Some(value.to_string());
+                FieldKind::ShowFrom
+            }
+            "rec" if crate::recurrence::parse_rec_spec(value).is_some() => {
+                p.rec = Some(value.to_string());
+                FieldKind::Repeat
+            }
+            "at" => match parse_clock(value) {
+                Some(t) => {
+                    p.time = Some(t);
+                    FieldKind::Time
+                }
+                None => continue,
+            },
+            _ => continue,
+        };
+        scratch.kind = Some(kind);
+        scratch.mark(s, e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Time of day ("at 6pm", "at 18:30", "7am")
+// ---------------------------------------------------------------------------
+
+/// `at 6pm`, `at 6 pm`, `at 18:30`, `6:30pm`, `7am`, `noon`. A bare number
+/// needs `at` *and* am/pm or minutes ("at 7" alone is too ambiguous: a
+/// time, an address, a quantity…).
+fn pass_time(scratch: &mut Scratch, p: &mut ParsedNl) {
+    scratch.kind = Some(FieldKind::Time);
+    if p.time.is_some() {
+        return;
+    }
+    let words = scratch.word_cache.clone();
+    let live = |s: &Scratch, i: usize| words.get(i).is_some_and(|w| s.is_live(w.0, w.1));
+    for i in 0..words.len() {
+        if !live(scratch, i) {
+            continue;
+        }
+        let at = scratch.word_lc(words[i]) == "at";
+        let first = if at { i + 1 } else { i };
+        if !live(scratch, first) {
+            continue;
+        }
+        let w = scratch.word_lc(words[first]).to_string();
+        let next = (first + 1 < words.len() && live(scratch, first + 1))
+            .then(|| scratch.word_lc(words[first + 1]).to_string());
+        let (time, count) = if w == "noon" || w == "midday" {
+            ((12, 0), 1)
+        } else if w == "midnight" {
+            ((0, 0), 1)
+        } else if let Some(t) = parse_clock_word(&w) {
+            (t, 1)
+        } else if let (Some(n), Some(suffix)) = (w.parse::<u32>().ok(), next.as_deref())
+            && let Some(t) = apply_meridiem(n, 0, suffix)
+        {
+            (t, 2)
+        } else {
+            continue;
+        };
+        // Without a leading `at`, only an explicit am/pm (or noon) counts:
+        // "18:30" alone could be a score or a ratio.
+        let explicit =
+            at || w.ends_with("am") || w.ends_with("pm") || count == 2 || !w.contains(':');
+        if !explicit {
+            continue;
+        }
+        let start = words[i].0;
+        let end = words[first + count - 1].1;
+        scratch.mark(start, end);
+        p.time = Some(time);
+        return;
+    }
+}
+
+/// `6pm`, `6:30pm`, `18:30`, `7am` (one word). Bare numbers don't count.
+fn parse_clock_word(w: &str) -> Option<(u32, u32)> {
+    for suffix in ["am", "pm"] {
+        if let Some(num) = w.strip_suffix(suffix) {
+            let (h, m) = split_clock(num)?;
+            return apply_meridiem(h, m, suffix);
+        }
+    }
+    if w.contains(':') {
+        let (h, m) = split_clock(w)?;
+        return (h < 24).then_some((h, m));
+    }
+    None
+}
+
+/// The value of an `at:` tag: `18:00`, `6pm`, `6:30pm`.
+fn parse_clock(v: &str) -> Option<(u32, u32)> {
+    parse_clock_word(&v.to_ascii_lowercase())
+}
+
+fn split_clock(s: &str) -> Option<(u32, u32)> {
+    let (h, m) = match s.split_once(':') {
+        Some((h, m)) => (h.parse().ok()?, m.parse().ok()?),
+        None => (s.parse().ok()?, 0),
+    };
+    (m < 60).then_some((h, m))
+}
+
+fn apply_meridiem(h: u32, m: u32, suffix: &str) -> Option<(u32, u32)> {
+    if !(1..=12).contains(&h) {
+        return None;
+    }
+    match suffix {
+        "am" => Some((h % 12, m)),
+        "pm" => Some((h % 12 + 12, m)),
+        _ => None,
     }
 }
 
@@ -369,12 +655,14 @@ fn pass_sigiled(scratch: &mut Scratch, p: &mut ParsedNl) {
         if !scratch.is_live(s, e) {
             continue;
         }
-        let tok = scratch.word_orig((s, e));
+        let tok = scratch.word_orig((s, e)).to_string();
         if let Some(name) = tok.strip_prefix('+') {
             push_unique(&mut p.projects, name);
+            scratch.kind = Some(FieldKind::Project);
             scratch.mark(s, e);
         } else if let Some(name) = tok.strip_prefix('@') {
             push_unique(&mut p.contexts, name);
+            scratch.kind = Some(FieldKind::Context);
             scratch.mark(s, e);
         }
     }
@@ -394,6 +682,7 @@ fn push_unique(out: &mut Vec<String>, name: &str) {
 // ---------------------------------------------------------------------------
 
 fn pass_threshold(scratch: &mut Scratch, p: &mut ParsedNl) {
+    scratch.kind = Some(FieldKind::ShowFrom);
     let words = scratch.word_cache.clone();
     let mut i = 0;
     while i + 2 < words.len() {
@@ -496,6 +785,10 @@ fn unit_char(s: &str) -> Option<char> {
 // ---------------------------------------------------------------------------
 
 fn pass_recurrence(scratch: &mut Scratch, p: &mut ParsedNl) -> Option<Weekday> {
+    scratch.kind = Some(FieldKind::Repeat);
+    if p.rec.is_some() {
+        return None;
+    }
     let words = scratch.word_cache.clone();
     for i in 0..words.len() {
         if !scratch.is_live(words[i].0, words[i].1) {
@@ -624,6 +917,10 @@ fn pass_date(
     today: NaiveDate,
     weekday_hint: Option<Weekday>,
 ) {
+    scratch.kind = Some(FieldKind::Date);
+    if p.due.is_some() {
+        return;
+    }
     let words = scratch.word_cache.clone();
     for i in 0..words.len() {
         if !scratch.is_live(words[i].0, words[i].1) {
@@ -1014,6 +1311,11 @@ fn pass_project_context(scratch: &mut Scratch, p: &mut ParsedNl) {
             }
         }
         let end_byte = words[name_idx].1;
+        scratch.kind = Some(if is_project {
+            FieldKind::Project
+        } else {
+            FieldKind::Context
+        });
         scratch.mark(words[start_word].0, end_byte);
         if is_project {
             push_unique(&mut p.projects, &name);
@@ -1029,6 +1331,7 @@ fn pass_project_context(scratch: &mut Scratch, p: &mut ParsedNl) {
 // ---------------------------------------------------------------------------
 
 fn pass_priority(scratch: &mut Scratch, p: &mut ParsedNl) {
+    scratch.kind = Some(FieldKind::Priority);
     if p.priority.is_some() {
         return;
     }
@@ -1397,5 +1700,101 @@ mod tests {
                 "t value {t:?} from {input:?} failed threshold::parse_threshold"
             );
         }
+    }
+
+    // ---- live detection --------------------------------------------------
+
+    fn spans_of(text: &str, det: &Detection) -> Vec<(String, FieldKind)> {
+        det.spans
+            .iter()
+            .map(|s| (text[s.start..s.end].to_string(), s.kind))
+            .collect()
+    }
+
+    #[test]
+    fn detect_reports_each_phrase_with_its_kind() {
+        let text = "call anna on friday at 6pm +work @calls";
+        let det = detect(text, d("2026-09-21"), &[]);
+        assert_eq!(
+            spans_of(text, &det),
+            [
+                ("on friday".to_string(), FieldKind::Date),
+                ("at 6pm".to_string(), FieldKind::Time),
+                ("+work".to_string(), FieldKind::Project),
+                ("@calls".to_string(), FieldKind::Context),
+            ]
+        );
+        assert_eq!(det.parsed.body, "call anna");
+        assert_eq!(det.parsed.due, Some(d("2026-09-25")));
+        assert_eq!(det.parsed.time, Some((18, 0)));
+        assert_eq!(
+            det.to_todo_txt(),
+            "call anna +work @calls due:2026-09-25 at:18:00"
+        );
+    }
+
+    #[test]
+    fn detect_recurrence_and_priority_phrases() {
+        let text = "gym every week high priority";
+        let det = detect(text, d("2026-09-21"), &[]);
+        let kinds: Vec<FieldKind> = det.spans.iter().map(|s| s.kind).collect();
+        assert!(kinds.contains(&FieldKind::Repeat), "{det:?}");
+        assert!(kinds.contains(&FieldKind::Priority), "{det:?}");
+        assert_eq!(det.parsed.body, "gym");
+    }
+
+    #[test]
+    fn a_rejected_phrase_stays_in_the_body() {
+        let text = "notes from friday meeting";
+        let det = detect(text, d("2026-09-21"), &[]);
+        assert_eq!(det.parsed.due, Some(d("2026-09-25")));
+
+        let rejected = [(FieldKind::Date, "friday".to_string())];
+        let det = detect(text, d("2026-09-21"), &rejected);
+        assert!(det.parsed.due.is_none());
+        assert!(det.is_empty());
+        assert_eq!(det.parsed.body, "notes from friday meeting");
+    }
+
+    #[test]
+    fn canonical_tokens_count_as_detected_fields() {
+        let text = "(B) pay rent due:2026-10-01 rec:+1m t:-3d at:09:30";
+        let det = detect(text, d("2026-09-21"), &[]);
+        assert_eq!(det.parsed.priority, Some('B'));
+        assert_eq!(det.parsed.due, Some(d("2026-10-01")));
+        assert_eq!(det.parsed.rec.as_deref(), Some("+1m"));
+        assert_eq!(det.parsed.time, Some((9, 30)));
+        assert_eq!(det.parsed.threshold.as_deref(), Some("-3d"));
+        assert_eq!(det.parsed.body, "pay rent");
+        assert_eq!(
+            det.to_todo_txt(),
+            "(B) pay rent due:2026-10-01 rec:+1m t:-3d at:09:30"
+        );
+    }
+
+    #[test]
+    fn time_phrases() {
+        let today = d("2026-09-21");
+        for (text, want) in [
+            ("standup at 9am", Some((9, 0))),
+            ("call at 6 pm", Some((18, 0))),
+            ("dinner at 21:15", Some((21, 15))),
+            ("lunch 12:30pm", Some((12, 30))),
+            ("meet at noon", Some((12, 0))),
+            ("buy 7am coffee beans", Some((7, 0))),
+            ("score 18:30 written down", None),
+            ("meet at 7", None),
+            ("meet at home", None),
+            ("table for 12pmx", None),
+        ] {
+            assert_eq!(detect(text, today, &[]).parsed.time, want, "{text}");
+        }
+    }
+
+    #[test]
+    fn plain_text_detects_nothing() {
+        let det = detect("buy milk", d("2026-09-21"), &[]);
+        assert!(det.is_empty());
+        assert_eq!(det.to_todo_txt(), "buy milk");
     }
 }

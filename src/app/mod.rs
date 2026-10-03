@@ -18,6 +18,7 @@ mod chord;
 mod draft;
 mod draft_overlay;
 mod flash;
+mod live_add;
 mod mutations;
 mod note_editor;
 mod notes_popup;
@@ -45,6 +46,7 @@ pub use draft_overlay::{
     format_rec_value, recurrence_next_preview,
 };
 pub use flash::Flash;
+pub use live_add::{CHIP_ORDER, Chip, describe_rec};
 pub use note_editor::{
     EditorKey, NormalOutcome, NoteCommandResult, NoteEditorMode, NoteEditorState, Register,
     UNSAVED_WARNING, VisualSelection, wrap_indent,

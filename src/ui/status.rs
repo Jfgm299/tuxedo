@@ -74,6 +74,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 DialogInputMode::Normal => {
                     "h/l navigate · w/b/e word · i/a insert · Enter save · Esc cancel"
                 }
+                DialogInputMode::Insert if app.live_add_active() => {
+                    "type naturally: tomorrow, at 6pm, every week, +project @context · Enter add"
+                }
                 DialogInputMode::Insert => "Enter save · Esc normal",
             },
             Mode::Visual => "space toggle · x complete · dd delete · Esc cancel",

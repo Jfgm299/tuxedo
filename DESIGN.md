@@ -229,7 +229,7 @@ Each release is usable on its own and worth a short video.
 
 | # | Release | Content |
 | --- | --- | --- |
-| 1 | **Live capture** | The new-task box with live detection and chips (English), on the current code base. |
+| 1 | **Live capture** ✅ | The new-task box with live detection and chips (English), on the current code base. Times are stored as an `at:HH:MM` tag until the new core lands. |
 | 2 | **tasq core** | New name. SQLite storage, the task model above, automatic migration from todo.txt. |
 | 3 | **Spaces and views** | Home screen, space tree, Today / Upcoming. |
 | 4 | **Routines** | Full recurrence (weekdays, every N, until), week and month views. |

@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use crate::app::{
     App, BuilderField, CalendarTarget, DraftOverlay, Mode, REC_UNIT_ORDER, TokenKind, WeekStart,
 };
+use crate::nl::{DetectedSpan, FieldKind};
 use crate::theme::Theme;
 
 /// Classifier output: byte range + what kind of token lives there. Segments
@@ -269,10 +270,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         " ADD TASK "
     };
+    // Live capture: the border takes the mode's colour, like the note
+    // editor's (green while typing, accent in Normal).
+    let border = if app.live_add_active() {
+        let palette = crate::ui::mode_colors::mode_palette(theme);
+        match app.draft.input_mode() {
+            crate::app::DialogInputMode::Insert => palette.insert,
+            crate::app::DialogInputMode::Normal => palette.normal,
+        }
+    } else {
+        theme.border
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.border).bg(theme.panel))
+        .border_style(Style::default().fg(border).bg(theme.panel))
         .title(Line::from(vec![Span::styled(
             title,
             Style::default()
@@ -317,11 +329,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         prefix_area,
     );
 
-    let content_line = Line::from(highlighted_draft_spans(
-        app.draft.text(),
-        app.draft.cursor(),
-        theme,
-    ))
+    let live = app.live_add_active();
+    let content_line = if live {
+        let det = app.live_detection();
+        Line::from(live_draft_spans(
+            app.draft.text(),
+            app.draft.cursor(),
+            theme,
+            &det.spans,
+            app.live_chip_focus().is_none(),
+        ))
+    } else {
+        Line::from(highlighted_draft_spans(
+            app.draft.text(),
+            app.draft.cursor(),
+            theme,
+        ))
+    }
     .style(Style::default().bg(theme.panel));
     let cursor = app.draft.cursor().min(app.draft.text().len());
     let cursor_col = app.draft.text()[..cursor].chars().count();
@@ -341,17 +365,169 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         content_area,
     );
 
-    let preview = preview_line(app);
+    let preview = if live {
+        chips_line(app)
+    } else {
+        preview_line(app)
+    };
     frame.render_widget(
         Paragraph::new(preview).style(Style::default().bg(theme.panel)),
         preview_area,
     );
 
-    let hint = hint_line(theme);
+    let hint = if live {
+        live_hint_line(app)
+    } else {
+        hint_line(theme)
+    };
     frame.render_widget(
         Paragraph::new(hint).style(Style::default().bg(theme.panel)),
         hint_area,
     );
+
+    if live && let Some(title) = app.live_toast() {
+        let toast = Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                "✓ added: ",
+                Style::default()
+                    .fg(crate::ui::mode_colors::mode_palette(theme).insert)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(title.to_string(), Style::default().fg(theme.fg)),
+            Span::styled("  ·  Ctrl+Z undo", Style::default().fg(theme.dim)),
+        ]);
+        frame.render_widget(
+            Paragraph::new(toast).style(Style::default().bg(theme.panel)),
+            _p1,
+        );
+    }
+}
+
+/// Icon and colour of each live-capture field. Plain Unicode that every
+/// terminal font has (Nerd Font icons are a later, optional extra).
+pub fn field_icon(kind: FieldKind) -> &'static str {
+    match kind {
+        FieldKind::Date => "▦",
+        FieldKind::Time => "◷",
+        FieldKind::Repeat => "↻",
+        FieldKind::Project => "+",
+        FieldKind::Context => "@",
+        FieldKind::Priority => "▲",
+        FieldKind::ShowFrom => "◐",
+    }
+}
+
+pub fn field_color(kind: FieldKind, theme: &Theme) -> Color {
+    match kind {
+        FieldKind::Date => theme.due,
+        FieldKind::Time => theme.accent,
+        FieldKind::Repeat => theme.pri_other,
+        FieldKind::Project => theme.project,
+        FieldKind::Context => theme.context,
+        FieldKind::Priority => theme.pri_a,
+        FieldKind::ShowFrom => theme.dim,
+    }
+}
+
+/// The draft with every detected phrase in its field's colour (bold), and
+/// the cursor drawn as an inverted cell when the text has focus.
+fn live_draft_spans<'a>(
+    draft: &'a str,
+    cursor: usize,
+    theme: &Theme,
+    spans: &[DetectedSpan],
+    show_cursor: bool,
+) -> Vec<Span<'a>> {
+    let plain = Style::default().fg(theme.fg);
+    // Split the text into styled runs.
+    let mut runs: Vec<(usize, usize, Style)> = Vec::new();
+    let mut pos = 0;
+    for s in spans {
+        if s.start > pos {
+            runs.push((pos, s.start, plain));
+        }
+        let style = Style::default()
+            .fg(field_color(s.kind, theme))
+            .add_modifier(Modifier::BOLD);
+        runs.push((s.start, s.end, style));
+        pos = s.end;
+    }
+    if pos < draft.len() {
+        runs.push((pos, draft.len(), plain));
+    }
+    let cursor = cursor.min(draft.len());
+    let mut out = Vec::new();
+    for (start, end, style) in runs {
+        if show_cursor && cursor >= start && cursor < end {
+            let next = next_boundary(draft, cursor);
+            if cursor > start {
+                out.push(Span::styled(&draft[start..cursor], style));
+            }
+            let fg = style.fg.unwrap_or(theme.fg);
+            out.push(Span::styled(
+                &draft[cursor..next],
+                Style::default().fg(theme.panel).bg(fg),
+            ));
+            if next < end {
+                out.push(Span::styled(&draft[next..end], style));
+            }
+        } else {
+            out.push(Span::styled(&draft[start..end], style));
+        }
+    }
+    if show_cursor && cursor == draft.len() {
+        out.push(Span::styled("█", Style::default().fg(theme.fg)));
+    }
+    out
+}
+
+/// The chip row: one chip per field, filled when detected, dimmed when
+/// empty, inverted when focused with `Tab`.
+fn chips_line<'a>(app: &App) -> Line<'a> {
+    let theme = app.theme();
+    let focus = app.live_chip_focus();
+    let mut spans: Vec<Span<'a>> = vec![Span::raw("  ")];
+    for (i, chip) in app.live_chips().into_iter().enumerate() {
+        let color = match (chip.kind, chip.value.as_deref()) {
+            (FieldKind::Priority, Some(v)) => v
+                .chars()
+                .nth(1)
+                .map_or(theme.pri_a, |c| theme.priority_color(c)),
+            _ => field_color(chip.kind, theme),
+        };
+        let label = match &chip.value {
+            Some(v) => format!(" {} {v} ", field_icon(chip.kind)),
+            None => format!(" {} ", field_icon(chip.kind)),
+        };
+        let style = if focus == Some(i) {
+            Style::default()
+                .fg(theme.panel)
+                .bg(color)
+                .add_modifier(Modifier::BOLD)
+        } else if chip.value.is_some() {
+            Style::default().fg(color).bg(theme.cursor)
+        } else {
+            Style::default().fg(theme.dim).bg(theme.cursor)
+        };
+        spans.push(Span::styled(label, style));
+        spans.push(Span::raw(" "));
+    }
+    Line::from(spans).style(Style::default().bg(theme.panel))
+}
+
+fn live_hint_line<'a>(app: &App) -> Line<'a> {
+    let theme = app.theme();
+    let keys = if app.live_chip_focus().is_some() {
+        "←/→ move · Enter pick · x reject · Esc back to text"
+    } else {
+        "Tab chips · Ctrl+Z undo detection · Enter add · Esc"
+    };
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(keys, Style::default().fg(theme.dim)),
+    ])
+    .style(Style::default().bg(theme.panel))
 }
 
 fn preview_line<'a>(app: &App) -> Line<'a> {
@@ -1488,17 +1664,16 @@ mod tests {
     }
 
     #[test]
-    fn preview_line_shows_priority_chip() {
+    fn add_dialog_chip_row_shows_the_detected_priority() {
+        // Adding a task, the preview line is replaced by the live-capture
+        // chip row: the priority chip fills in with the typed `(A)`.
         let app = build_insert_app("plain\n", "(A) Buy milk");
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| crate::ui::draw(f, &app)).unwrap();
         let text = dialog_inner_text(terminal.backend().buffer());
-        assert!(text.contains("ok"), "preview should say 'ok'\n{text}");
-        assert!(
-            text.contains("pri A"),
-            "preview should show 'pri A'\n{text}"
-        );
+        assert!(text.contains("▲ (A)"), "priority chip filled\n{text}");
+        assert!(text.contains("Tab chips"), "live-capture hint\n{text}");
     }
 
     #[test]
