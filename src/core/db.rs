@@ -46,6 +46,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS tasks_by_list ON tasks (list, position);
+CREATE TABLE IF NOT EXISTS notes (
+    id          TEXT PRIMARY KEY,
+    path        TEXT NOT NULL UNIQUE,
+    body        TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS task_tags (
     task_id TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
     kind    TEXT NOT NULL CHECK (kind IN ('project', 'context')),
@@ -353,7 +360,7 @@ pub fn title_of(raw: &str) -> String {
 }
 
 /// Current UTC time as RFC 3339 with milliseconds.
-fn now_rfc3339() -> String {
+pub(crate) fn now_rfc3339() -> String {
     chrono::Utc::now()
         .format("%Y-%m-%dT%H:%M:%S%.3fZ")
         .to_string()

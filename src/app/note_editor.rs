@@ -159,7 +159,7 @@ impl NoteEditorState {
     /// `note::note_template`, but the editor must stay defensive for any
     /// other path it's pointed at (or a file deleted from under it).
     pub fn load(path: PathBuf, mode: NoteEditorMode) -> Self {
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let content = crate::note_store::read(&path).unwrap_or_default();
         Self {
             path,
             lines: lines_from_content(&content),
@@ -191,7 +191,7 @@ impl NoteEditorState {
     /// keeping the cursor where it was as far as the new content allows.
     /// The reload itself is an undoable step.
     pub fn reload_from_disk(&mut self) {
-        let content = std::fs::read_to_string(&self.path).unwrap_or_default();
+        let content = crate::note_store::read(&self.path).unwrap_or_default();
         let lines = lines_from_content(&content);
         if lines != self.lines {
             self.push_undo();
@@ -250,7 +250,7 @@ impl NoteEditorState {
     /// save-then-load round-trips losslessly regardless of how many trailing
     /// blank lines the buffer has.
     pub fn save(&mut self) -> std::io::Result<()> {
-        std::fs::write(&self.path, format!("{}\n", self.lines.join("\n")))?;
+        crate::note_store::write(&self.path, &format!("{}\n", self.lines.join("\n")))?;
         self.dirty = false;
         Ok(())
     }

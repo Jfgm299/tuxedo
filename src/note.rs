@@ -96,16 +96,7 @@ pub fn folder_for_task(task: &Task, notes_dir: &Path) -> NotesFolder {
 /// List the `.md` files inside a notes folder, sorted by filename. Returns
 /// an empty `Vec` if the folder doesn't exist yet.
 pub fn list_notes(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut files: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
-        .collect();
-    files.sort();
-    files
+    crate::note_store::list_md(dir)
 }
 
 /// Move a legacy single-file note into a newly-created notes folder,
@@ -114,7 +105,7 @@ pub fn list_notes(dir: &Path) -> Vec<PathBuf> {
 /// todo.txt line; that is the caller's responsibility once it has
 /// Store/App access to rewrite it.
 pub fn migrate_legacy_note(old_path: &Path, new_dir: &Path) -> std::io::Result<PathBuf> {
-    std::fs::create_dir_all(new_dir)?;
+    crate::note_store::create_dir_all(new_dir)?;
     let file_name = old_path.file_name().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -144,12 +135,12 @@ pub const NOTES_UNLINKED_SUBDIR: &str = "unlinked";
 /// `<task_id>-<original-filename>` so neither file is lost.
 pub fn unlink_note(path: &Path, notes_dir: &Path, task_id: &str) -> std::io::Result<PathBuf> {
     let unlinked_dir = notes_dir.join(NOTES_UNLINKED_SUBDIR);
-    std::fs::create_dir_all(&unlinked_dir)?;
+    crate::note_store::create_dir_all(&unlinked_dir)?;
     let file_name = path.file_name().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
     })?;
     let mut target = unlinked_dir.join(file_name);
-    if target.exists() {
+    if crate::note_store::exists(&target) {
         target = unlinked_dir.join(format!("{task_id}-{}", file_name.to_string_lossy()));
     }
     move_file(path, &target)?;
@@ -161,11 +152,7 @@ pub fn unlink_note(path: &Path, notes_dir: &Path, task_id: &str) -> std::io::Res
 /// `rename(2)` can't do it in place). Shared by `migrate_legacy_note` and
 /// `unlink_note`, which differ only in how they pick `new_path`.
 fn move_file(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
-    if std::fs::rename(old_path, new_path).is_err() {
-        std::fs::copy(old_path, new_path)?;
-        std::fs::remove_file(old_path)?;
-    }
-    Ok(())
+    crate::note_store::rename(old_path, new_path)
 }
 
 fn folder_path_for_id(notes_dir: &Path, id: &str) -> PathBuf {

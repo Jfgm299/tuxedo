@@ -332,12 +332,12 @@ impl App {
         let file_name = normalize_note_file_name(name);
         let path = folder.dir.join(&file_name);
 
-        if let Err(e) = std::fs::create_dir_all(&folder.dir) {
+        if let Err(e) = crate::note_store::create_dir_all(&folder.dir) {
             self.flash(format!("note mkdir failed: {e}"));
             self.notes_popup.cancel_prompt();
             return;
         }
-        if let Err(e) = std::fs::write(&path, note::note_template(&task)) {
+        if let Err(e) = crate::note_store::write(&path, &note::note_template(&task)) {
             self.flash(format!("note write failed: {e}"));
             self.notes_popup.cancel_prompt();
             return;
@@ -385,12 +385,12 @@ impl App {
             self.notes_popup.cancel_prompt();
             return;
         }
-        if new_path.exists() {
+        if crate::note_store::exists(&new_path) {
             self.flash(format!("a note named {file_name} already exists"));
             return;
         }
 
-        if let Err(e) = std::fs::rename(&old_path, &new_path) {
+        if let Err(e) = crate::note_store::rename(&old_path, &new_path) {
             self.flash(format!("note rename failed: {e}"));
             self.notes_popup.cancel_prompt();
             return;
@@ -431,7 +431,7 @@ impl App {
             return;
         };
 
-        if let Err(e) = std::fs::remove_file(&path) {
+        if let Err(e) = crate::note_store::remove(&path) {
             self.flash(format!("note delete failed: {e}"));
             self.notes_popup.cancel_delete_confirm();
             return;

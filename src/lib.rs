@@ -13,6 +13,7 @@ pub mod inbox;
 pub mod keybinds;
 pub mod nl;
 pub mod note;
+pub mod note_store;
 pub mod recurrence;
 pub mod sample;
 pub mod search;

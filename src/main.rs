@@ -98,6 +98,12 @@ fn main() -> Result<()> {
         }
     };
     let path = app_state.file_path.clone();
+    // Task notes live in the database too.
+    if app_state.is_db()
+        && let Err(e) = tasq::note_store::use_database(&path, app_state.notes_dir())
+    {
+        app_state.flash(format!("notes stay files: {e}"));
+    }
     app_state.config_path = Config::path();
     if let Some(i) = &imported {
         app_state.flash(format!(
@@ -258,7 +264,7 @@ fn run(
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     handle_key(app, key, keybinds);
                     if let Some(path) = app.take_pending_editor_path() {
-                        open_path_in_editor(&path)?;
+                        tasq::note_store::edit_in(&path, open_path_in_editor)?;
                         enable_bracketed_paste();
                         terminal.clear()?;
                         app.reload_note_editors(&path);
