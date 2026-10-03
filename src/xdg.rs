@@ -22,3 +22,18 @@ pub fn config_home() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     Some(PathBuf::from(home).join(".config"))
 }
+
+/// Resolve the XDG base data directory: `XDG_DATA_HOME` when absolute,
+/// otherwise `~/.local/share` (also on macOS, like most command-line tools).
+pub fn data_home() -> Option<PathBuf> {
+    if let Some(v) = std::env::var_os("XDG_DATA_HOME")
+        && !v.is_empty()
+    {
+        let p = PathBuf::from(&v);
+        if p.is_absolute() {
+            return Some(p);
+        }
+    }
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".local").join("share"))
+}

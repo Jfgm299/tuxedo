@@ -7,7 +7,88 @@ use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::core::Store;
 use crate::sample;
+use crate::todo;
+
+/// Where the database lives: `$TASQ_DB` if set, otherwise
+/// `$XDG_DATA_HOME/tasq/tasq.db` (`~/.local/share/tasq/tasq.db`).
+pub fn db_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("TASQ_DB").filter(|p| !p.is_empty()) {
+        return Some(PathBuf::from(p));
+    }
+    Some(crate::xdg::data_home()?.join("tasq").join("tasq.db"))
+}
+
+/// The todo.txt a first run imports, found the way todo.sh (and tuxedo)
+/// look for it: `$TODO_FILE`, `$TODO_DIR/todo.txt`, then `./todo.txt`.
+/// Only an existing file counts.
+pub fn legacy_todo_path() -> Option<PathBuf> {
+    let candidates = [
+        std::env::var_os("TODO_FILE").map(PathBuf::from),
+        std::env::var_os("TODO_DIR").map(|d| PathBuf::from(d).join("todo.txt")),
+        Some(PathBuf::from("todo.txt")),
+    ];
+    candidates.into_iter().flatten().find(|p| p.is_file())
+}
+
+/// What a first run imported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Imported {
+    pub from: PathBuf,
+    pub live: usize,
+    pub archived: usize,
+}
+
+/// The database store, plus what was imported if this run created it.
+pub struct Opened {
+    pub store: Store,
+    pub imported: Option<Imported>,
+}
+
+/// Open the database (creating it if needed). When this run creates it and
+/// a todo.txt is found ([`legacy_todo_path`]), its tasks and its `done.txt`
+/// are imported; the files themselves are left untouched.
+pub fn open_database(today: String) -> io::Result<Opened> {
+    let path = db_path()
+        .ok_or_else(|| io::Error::other("can't find a home directory for the database"))?;
+    let fresh = !path.exists();
+    let mut store = Store::open_db(path, today)?;
+    let mut imported = None;
+    if fresh && let Some(from) = legacy_todo_path() {
+        let done = done_path(&from);
+        let (live, archived) = import_files(&mut store, &from, Some(&done))?;
+        imported = Some(Imported {
+            from,
+            live,
+            archived,
+        });
+    }
+    Ok(Opened { store, imported })
+}
+
+/// Append the tasks of `todo` (and of `done`, as archived tasks, when it
+/// exists) to the database store. Returns how many of each were added.
+pub fn import_files(
+    store: &mut Store,
+    todo: &Path,
+    done: Option<&Path>,
+) -> io::Result<(usize, usize)> {
+    let live = todo::parse_file(&std::fs::read_to_string(todo)?);
+    let archived = match done {
+        Some(d) => match std::fs::read_to_string(d) {
+            Ok(body) => todo::parse_file(&body),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(e),
+        },
+        None => Vec::new(),
+    };
+    let counts = (live.len(), archived.len());
+    store
+        .import(live, archived)
+        .map_err(|e| io::Error::other(e.to_string()))?;
+    Ok(counts)
+}
 
 /// Resolve the todo.txt path. Resolution order (todo.sh-compatible):
 ///

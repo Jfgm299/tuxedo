@@ -38,6 +38,10 @@ impl std::fmt::Display for TagError {
 
 #[derive(Debug, Clone)]
 pub struct Task {
+    /// Stable id (a ULID) given by the database backend; empty for a task
+    /// that has never been saved there (and always for plain todo.txt files).
+    /// Kept when the task's line is rewritten, so edits don't change it.
+    pub id: String,
     pub raw: String,
     pub clean_raw: String,
     pub done: bool,
@@ -112,6 +116,7 @@ pub fn parse_line(raw: &str) -> Result<Task, ParseError> {
     let clean_raw = body_after_quoted_kv(line);
 
     Ok(Task {
+        id: String::new(),
         raw: line.to_string(),
         clean_raw,
         done,
@@ -185,7 +190,7 @@ fn collect_tokens(s: &str, sigil: char) -> Vec<String> {
 
 /// Find the value of `key:value` for a specific key. Returns the first hit;
 /// later duplicates are ignored.
-fn find_kv(s: &str, key: &str) -> Option<String> {
+pub(crate) fn find_kv(s: &str, key: &str) -> Option<String> {
     for tok in s.split_whitespace() {
         if let Some((k, v)) = tok.split_once(':')
             && is_valid_key(k)
@@ -223,7 +228,7 @@ fn find_quoted_kv(s: &str, key: &str) -> Vec<String> {
     rest[..end].split(". ").map(str::to_owned).collect()
 }
 
-fn is_valid_key(k: &str) -> bool {
+pub(crate) fn is_valid_key(k: &str) -> bool {
     let mut chars = k.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -428,7 +433,9 @@ impl Task {
     /// Re-parse `raw` and overwrite self. Only mutates on success, so a
     /// failed parse leaves the task untouched.
     fn replace_from_raw(&mut self, raw: &str) -> Result<(), ParseError> {
+        let id = std::mem::take(&mut self.id);
         *self = parse_line(raw)?;
+        self.id = id;
         Ok(())
     }
 }

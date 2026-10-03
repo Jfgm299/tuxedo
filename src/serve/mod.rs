@@ -182,10 +182,16 @@ fn handle_add(mut req: Request, todo_path: &Path) -> Result<()> {
 /// response. The PWA splits on the separator to render the two
 /// sections; keeping it plain-text avoids pulling in serde.
 fn build_tasks_view(todo_path: &Path) -> Result<String> {
-    let todo_body = match std::fs::read_to_string(todo_path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e.into()),
+    // The database is read through SQLite; a todo.txt as text.
+    let todo_body = if todo_path.extension().is_some_and(|e| e == "db") {
+        let db = crate::core::db::Db::open(todo_path)?;
+        crate::todo::serialize(&db.load(crate::core::db::List::Live)?)
+    } else {
+        match std::fs::read_to_string(todo_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e.into()),
+        }
     };
     let inbox_path = inbox::path_for(todo_path);
     let inbox_body = match std::fs::read_to_string(&inbox_path) {

@@ -16,6 +16,8 @@ use crate::todo::Task;
 /// Parsed global options shared by every subcommand.
 struct Args {
     json: bool,
+    /// `--file PATH`: work on that todo.txt instead of the database.
+    file: Option<String>,
     /// `-f`/`--force`: skip confirmation prompts (matches todo.sh's `-f`).
     force: bool,
     free: Vec<String>,
@@ -24,10 +26,16 @@ struct Args {
 fn parse_args(rest: &[String]) -> Result<Args, String> {
     let mut json = false;
     let mut force = false;
+    let mut file = None;
     let mut free = Vec::new();
-    for a in rest {
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => json = true,
+            "--file" => match it.next() {
+                Some(p) => file = Some(p.clone()),
+                None => return Err("--file needs a path".to_string()),
+            },
             "-f" | "--force" => force = true,
             s if s.starts_with('-') && s != "-" => {
                 return Err(format!("unknown option: {s}"));
@@ -35,14 +43,19 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
             _ => free.push(a.clone()),
         }
     }
-    Ok(Args { json, force, free })
+    Ok(Args {
+        json,
+        file,
+        force,
+        free,
+    })
 }
 
 /// Every recognized subcommand and alias.
 const SUBCOMMANDS: &[&str] = &[
     "add", "a", "append", "app", "prepend", "prep", "replace", "pri", "p", "depri", "dp", "done",
     "do", "complete", "del", "rm", "archive", "list", "ls", "listall", "lsa", "listpri", "lsp",
-    "listproj", "lsprj", "listcon", "lsc",
+    "listproj", "lsprj", "listcon", "lsc", "import", "export",
 ];
 
 /// Locate the subcommand: the first non-global token, if it is a known
@@ -54,6 +67,8 @@ fn find_subcommand(argv: &[String]) -> Option<usize> {
         let a = argv[i].as_str();
         if a == "--json" || a == "-f" || a == "--force" {
             i += 1;
+        } else if a == "--file" {
+            i += 2;
         } else {
             return SUBCOMMANDS.contains(&a).then_some(i);
         }
@@ -83,16 +98,33 @@ pub fn run(argv: &[String]) -> Result<Option<i32>> {
         }
     };
 
-    // todo.sh-style path resolution via $TODO_FILE / $TODO_DIR / $DONE_FILE.
-    let path = crate::cli::resolve_path(None).context("resolving todo file")?;
-    let done = crate::cli::done_path(&path);
-    let body = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-    };
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let mut store = Store::open_sync_with_done(path, done, body, today);
+    let mut store = match &args.file {
+        // `--file PATH`: that todo.txt (and its done.txt), todo.sh-style.
+        Some(p) => {
+            let path = crate::cli::ensure_file(std::path::PathBuf::from(p))
+                .with_context(|| format!("opening {p}"))?;
+            let done = crate::cli::done_path(&path);
+            let body = match std::fs::read_to_string(&path) {
+                Ok(s) => s,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+            };
+            Store::open_sync_with_done(path, done, body, today)
+        }
+        None => {
+            let opened = crate::cli::open_database(today).context("opening the tasq database")?;
+            if let Some(i) = &opened.imported {
+                eprintln!(
+                    "tuxedo: imported {} tasks ({} archived) from {}",
+                    i.live,
+                    i.archived,
+                    i.from.display()
+                );
+            }
+            opened.store
+        }
+    };
 
     let json = args.json;
     let force = args.force;
@@ -112,6 +144,8 @@ pub fn run(argv: &[String]) -> Result<Option<i32>> {
         "listpri" | "lsp" => cmd_listpri(&store, pos, json),
         "listproj" | "lsprj" => cmd_listtags(&store, json, TagKind::Project),
         "listcon" | "lsc" => cmd_listtags(&store, json, TagKind::Context),
+        "import" => cmd_import(&mut store, pos),
+        "export" => cmd_export(&store, pos),
         other => {
             eprintln!("tuxedo: unknown command: {other}");
             2
@@ -175,6 +209,55 @@ fn store_error(json: bool, action: &str, e: impl std::fmt::Display) -> i32 {
         eprintln!("tuxedo: {e}");
     }
     1
+}
+
+// ----- import / export ---------------------------------------------------
+
+/// `import TODO.TXT [DONE.TXT]`: append a todo.txt's tasks to the database,
+/// and its done.txt's as archived ones (the sibling `done.txt` when none is
+/// named). The files are not changed.
+fn cmd_import(store: &mut Store, pos: &[String]) -> i32 {
+    if !store.is_db() {
+        return err("import works on the database, not with --file");
+    }
+    let Some(todo) = pos.first() else {
+        return usage("import TODO.TXT [DONE.TXT]");
+    };
+    let todo = std::path::PathBuf::from(todo);
+    let done = pos
+        .get(1)
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| crate::cli::done_path(&todo));
+    match crate::cli::import_files(store, &todo, Some(&done)) {
+        Ok((live, archived)) => {
+            println!(
+                "imported {live} tasks and {archived} archived ones from {}",
+                todo.display()
+            );
+            0
+        }
+        Err(e) => err(format!("{}: {e}", todo.display())),
+    }
+}
+
+/// `export [--all | archive]`: print the tasks as todo.txt lines — the live
+/// list, the archive (`archive`), or both (`all`).
+fn cmd_export(store: &Store, pos: &[String]) -> i32 {
+    let (live, archived) = match pos.first().map(String::as_str) {
+        None => (true, false),
+        Some("archive") => (false, true),
+        Some("all") => (true, true),
+        Some(_) => return usage("export [archive | all]"),
+    };
+    let mut out = String::new();
+    if live {
+        out.push_str(&crate::todo::serialize(store.tasks()));
+    }
+    if archived {
+        out.push_str(&crate::todo::serialize(store.archive().tasks()));
+    }
+    print!("{out}");
+    0
 }
 
 // ----- mutating commands -------------------------------------------------

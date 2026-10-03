@@ -226,6 +226,12 @@ impl App {
         Self::from_store(store, file_path, cfg)
     }
 
+    /// Construct an App on an already-open store (the database).
+    pub fn with_store(store: Store, cfg: Config) -> Self {
+        let file_path = store.file_path().to_path_buf();
+        Self::from_store(store, file_path, cfg)
+    }
+
     fn from_store(store: Store, file_path: PathBuf, cfg: Config) -> Self {
         // Read saved filters before `cfg` is moved into `Prefs::from_config`.
         let note_dir = note::notes_dir_from_config(cfg.notes_dir.as_deref());

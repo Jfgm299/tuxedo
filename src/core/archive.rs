@@ -70,6 +70,16 @@ impl Archive {
         }
     }
 
+    /// The archive of a database store: already loaded, nothing to watch.
+    pub(crate) fn in_db(tasks: Vec<Task>, path: PathBuf) -> Self {
+        Self {
+            tasks,
+            path,
+            last_disk: String::new(),
+            loader: None,
+        }
+    }
+
     /// Test-only constructor that skips the worker thread and seeds in-memory
     /// state directly.
     #[cfg(test)]
@@ -116,6 +126,10 @@ impl Store {
     }
 
     fn refresh_archive_for_mutation(&mut self) -> ArchiveRefresh {
+        // A database archive is refreshed by `reconcile`.
+        if self.db.is_some() {
+            return ArchiveRefresh::Ready;
+        }
         let body = match self.read_archive_body() {
             Ok(b) => b,
             Err(e) => return ArchiveRefresh::Error(e),
@@ -134,6 +148,9 @@ impl Store {
     /// startup loader landed, or an external edit to `done.txt` was picked up.
     /// Non-blocking. The caller (TUI) is responsible for any view recompute.
     pub fn poll_archive(&mut self) -> bool {
+        if self.db.is_some() {
+            return false;
+        }
         let mut changed = false;
         if let Some(rx) = &self.archive.loader {
             match rx.try_recv() {
@@ -181,6 +198,20 @@ impl Store {
         let to_move: Vec<Task> = self.tasks.iter().filter(|t| t.done).cloned().collect();
         if to_move.is_empty() {
             return ArchiveOutcome::Nothing;
+        }
+        if self.db.is_some() {
+            let mut remaining: Vec<Task> = self.tasks.iter().filter(|t| !t.done).cloned().collect();
+            let mut archived = self.archive.tasks.clone();
+            archived.extend(to_move.iter().cloned());
+            if let Err(e) = self.save_lists(Some(&mut remaining), Some(&mut archived)) {
+                return ArchiveOutcome::Error(e);
+            }
+            self.push_history();
+            self.tasks = remaining;
+            self.archive.tasks = archived;
+            return ArchiveOutcome::Archived {
+                count: to_move.len(),
+            };
         }
         // Read fresh so an external edit to done.txt since startup isn't lost.
         let previous_archive_body = match self.read_archive_body() {
@@ -240,6 +271,18 @@ impl Store {
             .filter(|(i, _)| *i != archive_idx)
             .map(|(_, t)| t.clone())
             .collect();
+        if self.db.is_some() {
+            let mut new_archive = new_archive;
+            let mut live = self.tasks.clone();
+            live.push(task);
+            if let Err(e) = self.save_lists(Some(&mut live), Some(&mut new_archive)) {
+                return UnarchiveOutcome::Error(e);
+            }
+            self.push_history();
+            self.tasks = live;
+            self.archive.tasks = new_archive;
+            return UnarchiveOutcome::Unarchived;
+        }
         let archive_body = todo::serialize(&new_archive);
         if let Err(e) = todo::write_atomic(&self.archive.path, &archive_body) {
             return UnarchiveOutcome::Error(StoreError::ArchiveIo(e));
@@ -274,6 +317,14 @@ impl Store {
             .filter(|(i, _)| *i != archive_idx)
             .map(|(_, t)| t.clone())
             .collect();
+        if self.db.is_some() {
+            let mut new_archive = new_archive;
+            if let Err(e) = self.save_lists(None, Some(&mut new_archive)) {
+                return ArchiveDeleteOutcome::Error(e);
+            }
+            self.archive.tasks = new_archive;
+            return ArchiveDeleteOutcome::Deleted;
+        }
         let archive_body = todo::serialize(&new_archive);
         if let Err(e) = todo::write_atomic(&self.archive.path, &archive_body) {
             return ArchiveDeleteOutcome::Error(StoreError::ArchiveIo(e));
@@ -284,6 +335,18 @@ impl Store {
     }
 
     pub(crate) fn persist(&mut self) -> Result<(), StoreError> {
+        if let Some(db) = self.db.as_mut() {
+            db.save(Some(&mut self.tasks), None)
+                .map_err(StoreError::Write)?;
+            // A task back in the live list (undo of an archive) has left the
+            // archive in the database; mirror that.
+            if !self.archive.tasks.is_empty() {
+                let live: std::collections::HashSet<&str> =
+                    self.tasks.iter().map(|t| t.id.as_str()).collect();
+                self.archive.tasks.retain(|t| !live.contains(t.id.as_str()));
+            }
+            return Ok(());
+        }
         let body = todo::serialize(&self.tasks);
         match todo::write_atomic(&self.file_path, &body) {
             Ok(()) => {

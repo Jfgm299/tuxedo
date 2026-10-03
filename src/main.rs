@@ -34,9 +34,9 @@ fn main() -> Result<()> {
         std::process::exit(code);
     }
     let arg = argv.first().cloned();
-    // `start_mode` is `Welcome` only on a true first run (no target and no
-    // ./todo.txt); every other entry opens straight into Normal.
-    let (path, start_mode) = match arg.as_deref() {
+    // With no argument tasq opens its database. A todo.txt path (or
+    // `--sample`) opens that file directly, todo.txt-style.
+    let file_target = match arg.as_deref() {
         Some("--help") | Some("-h") => {
             print_usage();
             return Ok(());
@@ -49,30 +49,14 @@ fn main() -> Result<()> {
             update::run()?;
             return Ok(());
         }
-        Some("--sample") => (cli::sample_path()?, Mode::Normal),
+        Some("--sample") => Some(cli::sample_path()?),
         Some(s) if s.starts_with('-') => {
             eprintln!("tuxedo: unknown option: {s}");
             eprintln!("try `tuxedo --help`");
             std::process::exit(2);
         }
-        _ => match cli::resolve_target(arg)? {
-            cli::Target::File(p) => (p, Mode::Normal),
-            // Open into the welcome prompt backed by an as-yet-uncreated
-            // ./todo.txt; `handle_welcome` materializes the file the user picks.
-            cli::Target::FirstRun => (std::path::PathBuf::from("todo.txt"), Mode::Welcome),
-        },
-    };
-    // A freshly-created file is empty; otherwise read it. We accept NotFound
-    // (race with deletion between resolve_path and now) as "empty file" but
-    // refuse to silently swallow other IO errors — an unreadable or non-UTF-8
-    // file would otherwise present as an empty editor that, on first save,
-    // overwrites the user's data.
-    let body = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(e) => {
-            return Err(e).with_context(|| format!("reading {}", path.display()));
-        }
+        Some(p) => Some(cli::ensure_file(std::path::PathBuf::from(p))?),
+        None => None,
     };
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let cfg = Config::load();
@@ -90,10 +74,37 @@ fn main() -> Result<()> {
             Vec::new()
         }
     };
-    let done = cli::done_path(&path);
-    let mut app_state = App::new_with_done(path.clone(), done, body, today, cfg);
+    let mut imported = None;
+    let mut app_state = match &file_target {
+        Some(path) => {
+            // An unreadable or non-UTF-8 file must not open as an empty list
+            // that the first save would write over.
+            let body = match std::fs::read_to_string(path) {
+                Ok(s) => s,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+                Err(e) => {
+                    return Err(e).with_context(|| format!("reading {}", path.display()));
+                }
+            };
+            let done = cli::done_path(path);
+            App::new_with_done(path.clone(), done, body, today, cfg)
+        }
+        None => {
+            let opened = cli::open_database(today).context("opening the tasq database")?;
+            imported = opened.imported;
+            App::with_store(opened.store, cfg)
+        }
+    };
+    let path = app_state.file_path.clone();
     app_state.config_path = Config::path();
-    app_state.mode = start_mode;
+    if let Some(i) = &imported {
+        app_state.flash(format!(
+            "imported {} tasks ({} archived) from {} — the file is left as it was",
+            i.live,
+            i.archived,
+            i.from.display()
+        ));
+    }
     // Start the config hot-reload watcher.
     let config_rx = app_state
         .config_path

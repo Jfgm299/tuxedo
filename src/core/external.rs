@@ -10,6 +10,26 @@ impl Store {
     /// the inbox — draining is a separate, explicitly-invoked step (the TUI run
     /// loop and the CLI's mutating commands call [`Store::drain_inbox`]).
     pub fn reconcile(&mut self) -> Reconcile {
+        if let Some(db) = self.db.as_mut() {
+            return match db.changed_externally() {
+                Ok(false) => Reconcile::Unchanged,
+                Ok(true) => {
+                    let lists = db
+                        .load(super::db::List::Live)
+                        .and_then(|l| Ok((l, db.load(super::db::List::Archive)?)));
+                    match lists {
+                        Ok((live, archived)) => {
+                            self.tasks = live;
+                            self.archive.tasks = archived;
+                            self.history.clear();
+                            Reconcile::Reloaded
+                        }
+                        Err(_) => Reconcile::ReadError,
+                    }
+                }
+                Err(_) => Reconcile::ReadError,
+            };
+        }
         let read = std::fs::read_to_string(&self.file_path);
         self.apply_external_state(read)
     }
@@ -120,11 +140,16 @@ impl Store {
         self.push_history();
         let merged = new_tasks.len();
         self.tasks.extend(new_tasks);
-        let body = todo::serialize(&self.tasks);
-        match todo::write_atomic(&self.file_path, &body) {
-            Ok(()) => {
-                self.last_disk = body;
-            }
+        let written = if self.db.is_some() {
+            self.persist().map_err(|e| e.to_string())
+        } else {
+            let body = todo::serialize(&self.tasks);
+            todo::write_atomic(&self.file_path, &body)
+                .map(|()| self.last_disk = body)
+                .map_err(|e| e.to_string())
+        };
+        match written {
+            Ok(()) => {}
             Err(e) => {
                 // Roll back the in-memory append; leave staging for retry.
                 self.tasks.truncate(self.tasks.len() - merged);

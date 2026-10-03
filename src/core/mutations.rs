@@ -301,7 +301,8 @@ impl Store {
     /// Caller is responsible for reconcile + bounds checks.
     fn rewrite_raw(&mut self, abs: usize, new_raw: &str) -> EditOutcome {
         match todo::parse_line(new_raw) {
-            Ok(task) => {
+            Ok(mut task) => {
+                task.id = self.tasks[abs].id.clone();
                 self.push_history();
                 self.tasks[abs] = task;
                 match self.persist() {
@@ -479,7 +480,8 @@ impl Store {
             let created = t.created_date.clone().unwrap_or_else(|| self.today.clone());
             let body = todo::body_after_priority(&raw).to_string();
             let new_raw = format!("x {} {} {}", self.today, created, body);
-            if let Ok(parsed) = todo::parse_line(&new_raw) {
+            if let Ok(mut parsed) = todo::parse_line(&new_raw) {
+                parsed.id = self.tasks[abs].id.clone();
                 self.tasks[abs] = parsed;
             }
             if let Some(spec) = rec_spec
