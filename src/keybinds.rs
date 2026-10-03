@@ -1,6 +1,6 @@
 //! User-configurable keybindings.
 //!
-//! Path: `${XDG_CONFIG_HOME:-$HOME/.config}/tuxedo/keybinds.toml`
+//! Path: `${XDG_CONFIG_HOME:-$HOME/.config}/tasq/keybinds.toml`
 //!
 //! Format: a `[normal]` table whose keys are `Action` names in snake_case and
 //! whose values are a string or array of strings, for example:
@@ -137,7 +137,7 @@ impl KeyBindings {
     }
 
     pub fn path_in(xdg_base: &Path) -> PathBuf {
-        xdg_base.join("tuxedo").join("keybinds.toml")
+        xdg_base.join("tasq").join("keybinds.toml")
     }
 
     /// Resolve a key pressed while the recurrence-builder overlay is open.
@@ -493,9 +493,9 @@ mod tests {
     }
 
     #[test]
-    fn path_uses_tuxedo_keybinds_toml() {
+    fn path_uses_tasq_keybinds_toml() {
         let path = KeyBindings::path_in(Path::new("/tmp/config"));
-        assert!(path.ends_with("tuxedo/keybinds.toml"));
+        assert!(path.ends_with("tasq/keybinds.toml"));
     }
 
     #[test]

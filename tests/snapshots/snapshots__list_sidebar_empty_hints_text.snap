@@ -2,7 +2,7 @@
 source: tests/snapshots.rs
 expression: buffer_to_text(&buf)
 ---
- FILTERS                   ▶▮◀ /tmp/tuxedo-snapshot.txt  •  3 task DETAIL                           
+ FILTERS                   ▶▮◀ /tmp/tasq-snapshot.txt  •  3 tasks  DETAIL                           
                                                                                                     
  PROJECTS                  (1)  PRIORITY A  ────────────────────── priority  (A)                    
    tag with +project        1 ▸ (A) Buy milk                       created   —                      
@@ -33,4 +33,4 @@ expression: buffer_to_text(&buf)
                                                                                                     
                                                                                                     
                                                                                                     
- NORMAL   j/k · n new · r reschedule · x done · * star · o not3 open · 2026-05-06 · tuxedo 2026.8.1
+ NORMAL   j/k · n new · r reschedule · x done · * star · o note3 open · 2026-05-06 · tasq 2026.10.0

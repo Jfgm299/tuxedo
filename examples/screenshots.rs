@@ -16,11 +16,11 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier};
 
-use tuxedo::app::{App, Density, EditorKey, Mode, NoteEditorMode, NoteEditorState, View};
-use tuxedo::config::Config;
-use tuxedo::sample;
-use tuxedo::theme;
-use tuxedo::ui;
+use tasq::app::{App, Density, EditorKey, Mode, NoteEditorMode, NoteEditorState, View};
+use tasq::config::Config;
+use tasq::sample;
+use tasq::theme;
+use tasq::ui;
 
 const COLS: u16 = 130;
 const ROWS: u16 = 32;
@@ -57,7 +57,7 @@ fn main() -> std::io::Result<()> {
     // user's themes dir), so the custom-theme scene can select one.
     let (user_themes, _) = theme::load_user_themes(Path::new("docs/themes"));
     theme::init(user_themes);
-    let note_dir = std::env::temp_dir().join("tuxedo-screenshots-notes");
+    let note_dir = std::env::temp_dir().join("tasq-screenshots-notes");
     fs::create_dir_all(&note_dir)?;
     let note_path = note_dir.join("deck.md");
     fs::write(&note_path, NOTE)?;
@@ -66,7 +66,7 @@ fn main() -> std::io::Result<()> {
     // consistent and pack the most content per frame.
     let make = || {
         let mut app = App::new(
-            PathBuf::from("/tmp/tuxedo-screenshots.txt"),
+            PathBuf::from("/tmp/tasq-screenshots.txt"),
             sample::TODO_RAW.to_string(),
             "2026-05-06".to_string(),
             Config::default(),
@@ -106,7 +106,7 @@ fn main() -> std::io::Result<()> {
     // 6. Empty state — fresh file, cell-bowtie logo and quick-start panel.
     // Sidebars hidden so the centered panel reads as the focal point.
     let mut app = App::new(
-        PathBuf::from("/tmp/tuxedo-screenshots-empty.txt"),
+        PathBuf::from("/tmp/tasq-screenshots-empty.txt"),
         String::new(),
         "2026-05-06".to_string(),
         Config::default(),
@@ -142,7 +142,7 @@ fn main() -> std::io::Result<()> {
                 "Draft hiring rubric for senior eng +work @laptop star:1",
             );
         let mut app = App::new(
-            PathBuf::from("/tmp/tuxedo-screenshots.txt"),
+            PathBuf::from("/tmp/tasq-screenshots.txt"),
             raw,
             "2026-05-06".to_string(),
             Config::default(),

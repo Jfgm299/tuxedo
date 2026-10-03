@@ -1,6 +1,6 @@
 {
-  "name": "tuxedo capture",
-  "short_name": "tuxedo",
+  "name": "tasq capture",
+  "short_name": "tasq",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

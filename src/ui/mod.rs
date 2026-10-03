@@ -345,7 +345,7 @@ mod tests {
         use crate::config::Config;
 
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-ui-pin-render-{}-{:?}",
+            "tasq-ui-pin-render-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

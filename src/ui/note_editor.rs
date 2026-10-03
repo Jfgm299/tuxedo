@@ -545,7 +545,7 @@ mod tests {
     #[test]
     fn render_editor_soft_wraps_long_lines_without_changing_the_buffer() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-ui-wrap-{}-{:?}",
+            "tasq-ui-wrap-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn render_editor_scrolls_to_keep_the_cursor_visible() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-ui-scroll-{}-{:?}",
+            "tasq-ui-scroll-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn render_editor_scopes_the_command_prompt_to_its_own_area_not_full_screen() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-note-editor-render-cmd-prompt-{}-{:?}",
+            "tasq-note-editor-render-cmd-prompt-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -655,7 +655,7 @@ mod tests {
     #[test]
     fn render_editor_draws_no_command_prompt_when_it_is_closed() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-note-editor-render-no-cmd-prompt-{}-{:?}",
+            "tasq-note-editor-render-no-cmd-prompt-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -681,7 +681,7 @@ mod tests {
     #[test]
     fn render_pinned_shows_no_tab_bar_for_a_single_pinned_note() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-note-editor-render-single-{}-{:?}",
+            "tasq-note-editor-render-single-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn render_pinned_shows_a_tab_bar_listing_every_tab_when_more_than_one_is_pinned() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-note-editor-render-multi-{}-{:?}",
+            "tasq-note-editor-render-multi-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -745,7 +745,7 @@ mod tests {
     #[test]
     fn render_pinned_tab_bar_marks_the_active_tab_with_the_same_glyph_as_the_notes_list() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-note-editor-render-tab-glyph-{}-{:?}",
+            "tasq-note-editor-render-tab-glyph-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -780,7 +780,7 @@ mod tests {
     #[test]
     fn render_pinned_highlights_the_active_tab_with_the_cursor_theme_color() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-note-editor-render-highlight-{}-{:?}",
+            "tasq-note-editor-render-highlight-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

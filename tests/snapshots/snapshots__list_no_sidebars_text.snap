@@ -2,7 +2,7 @@
 source: tests/snapshots.rs
 expression: buffer_to_text(&buf)
 ---
- ▶▮◀ /tmp/tuxedo-snapshot.txt  •  15 tasks  •  sort:priority                                        
+ ▶▮◀ /tmp/tasq-snapshot.txt  •  15 tasks  •  sort:priority                                          
                                                                                                     
  (2)  PRIORITY A  ─────────────────────────────────────────────────────────────────────             
   1 ▸ (A) Finish Q2 board deck +work @laptop due:2026-05-06                                         
@@ -33,4 +33,4 @@ expression: buffer_to_text(&buf)
                                                                                                     
                                                                                                     
                                                                                                     
- NORMAL   j/k · n new · r reschedule · x done · * star · o no15 open · 2026-05-06 · tuxedo 2026.8.1
+ NORMAL   j/k · n new · r reschedule · x done · * star · o not15 open · 2026-05-06 · tasq 2026.10.0

@@ -258,7 +258,7 @@ mod tests {
 
     fn unique_temp_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-test-note-{}-{}-{:?}",
+            "tasq-test-note-{}-{}-{:?}",
             label,
             std::process::id(),
             std::thread::current().id()

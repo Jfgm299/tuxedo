@@ -1579,6 +1579,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tasq"
+version = "2026.10.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "crossterm",
+ "getrandom 0.2.17",
+ "insta",
+ "notify",
+ "pulldown-cmark",
+ "qrcode",
+ "ratatui",
+ "rusqlite",
+ "tiny_http",
+ "unicode-width",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1725,24 +1743,6 @@ dependencies = [
  "chunked_transfer",
  "httpdate",
  "log",
-]
-
-[[package]]
-name = "tuxedo"
-version = "2026.8.1"
-dependencies = [
- "anyhow",
- "chrono",
- "crossterm",
- "getrandom 0.2.17",
- "insta",
- "notify",
- "pulldown-cmark",
- "qrcode",
- "ratatui",
- "rusqlite",
- "tiny_http",
- "unicode-width",
 ]
 
 [[package]]

@@ -48,7 +48,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let items: &[(&str, Option<String>)] = &[
         ("FILES", None),
-        ("  todo file", Some(app.file_path.display().to_string())),
+        (
+            if app.store.is_db() {
+                "  database"
+            } else {
+                "  todo file"
+            },
+            Some(app.file_path.display().to_string()),
+        ),
         ("  config file", Some(config_path)),
         ("", Some("".into())),
         ("DISPLAY", None),

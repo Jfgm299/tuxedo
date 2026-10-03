@@ -1,40 +1,47 @@
-# tuxedo
+# tasq
 
-A fast, keyboard-driven terminal UI for [todo.txt](http://todotxt.org/).
-Vim-style bindings, atomic writes, instant external-edit detection, and five
-hand-tuned themes — all in a single static binary.
+**Capture your notes, plan your routines from the terminal: fast, local, and
+in your calendars.**
+
+A keyboard-driven task manager for the terminal: natural-language capture
+that understands you as you type, tasks with notes, vim keys everywhere, and
+a local database that stays yours — with todo.txt in and out whenever you
+want it. See [`DESIGN.md`](DESIGN.md) for where it's going.
 
 ```sh
-brew install tuxedo
+git clone https://github.com/Jfgm299/tasq && cd tasq && ./install.sh
 ```
 
-[![CI](https://github.com/webstonehq/tuxedo/actions/workflows/ci.yml/badge.svg)](https://github.com/webstonehq/tuxedo/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/webstonehq/tuxedo?logo=github)](https://github.com/webstonehq/tuxedo/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 [![Rust](https://img.shields.io/badge/rust-2024-orange.svg?logo=rust)](https://www.rust-lang.org)
 
-![tuxedo demo](docs/demo.gif)
+![tasq demo](docs/demo.gif)
 
-For a more in-depth walkthrough, please watch [this video](https://www.youtube.com/watch?v=mT1tg6SQ_Ag) by [@IogaMaster](https://github.com/IogaMaster).
+## Where tasq comes from
 
-## About this fork
-
-This is a personal fork of [webstonehq/tuxedo](https://github.com/webstonehq/tuxedo)
+tasq grew out of a personal fork of
+[webstonehq/tuxedo](https://github.com/webstonehq/tuxedo), a todo.txt TUI
 (MIT licensed — see [`LICENSE`](LICENSE)). All credit for the base
-application — the todo.txt engine, the TUI, the themes, everything described
-below in the rest of this README — goes to that upstream project and its
-contributors. This fork adds, on top: a **notes popup**, so a task can carry
-one or more markdown notes, edited (vim-style) and previewed without leaving
-the app, and **starred tasks** that stay at the top of their priority.
+application — the todo.txt engine, the TUI, the themes, most of what this
+README describes — goes to that project and its contributors (there's an
+in-depth walkthrough of it in [this video](https://www.youtube.com/watch?v=mT1tg6SQ_Ag)
+by [@IogaMaster](https://github.com/IogaMaster)). On top of it, tasq adds a
+local database, notes, live natural-language capture and more, listed below.
 
-### What's different from upstream
+### What tasq adds
+
+- **A local database** (SQLite) holds your tasks, each with a stable id —
+  the base for sync, calendars and the phone. The first run imports your
+  todo.txt and done.txt and leaves the files as they were; `tasq export`
+  writes todo.txt back out, and `tasq FILE.txt` still edits a todo.txt
+  directly.
 
 - **Multiple notes per task**, stored one per file under `notes_dir/tasks/<id>/`
   (`notes:<id>/` token), replacing upstream's single-file `note:<path>` model.
 - **A popup to browse/manage them** (`o` on a task) instead of shelling out
   to `$EDITOR`. A new note starts with just the task's title as a heading.
 - **An embedded markdown editor** built into the TUI itself — no external
-  editor process, and it respects tuxedo's active theme. It speaks the
+  editor process, and it respects tasq's active theme. It speaks the
   everyday subset of vim (motions, operators, counts, Visual mode, undo,
   yank/put to the system clipboard), continues markdown lists as you type,
   and soft-wraps long lines to the window width without touching the file.
@@ -127,34 +134,29 @@ goes in verbatim, lists and all.
 ### Install
 
 ```sh
-./install.sh          # then run: tuxedo-w-notes
+./install.sh          # then run: tasq
 ```
 
-To update later: `git pull && ./install.sh`.
+To update later: `git pull && ./install.sh`. It installs `~/.local/bin/tasq`
+(override with `$INSTALL_DIR` / `$INSTALL_NAME`).
 
-Installs as `tuxedo-w-notes` (override with `$INSTALL_NAME`), not `tuxedo` —
-deliberately a different command name, independent of a Homebrew-installed
-upstream `tuxedo` (`brew install tuxedo`), which this never touches. On most
-setups `/opt/homebrew/bin` (where Homebrew puts it) comes before
-`~/.local/bin` (where this installs by default) on `PATH`, so a plain
-`tuxedo` would just keep launching the Homebrew build no matter where this
-one lives — a distinct name sidesteps that instead of asking you to reorder
-your `PATH`, which would affect every other tool you have installed both
-ways, not just this one.
-
-See [`odd/tasks/notes-popup.md`](odd/tasks/notes-popup.md) for the full
-design rationale and implementation history of this feature.
+**Coming from tuxedo?** The first `tasq` run copies your settings from
+`~/.config/tuxedo` (theme, notes folder, keys, themes) and imports the
+todo.txt it finds through `$TODO_FILE`, `$TODO_DIR` or `./todo.txt` — so run
+it the way you ran tasq, or import a file explicitly with
+`tasq import ~/path/to/todo.txt`. Nothing is written to the old files. The
+old `tuxedo-w-notes` binary can be deleted.
 
 ## Highlights
 
-- **Pure todo.txt.** Reads and writes the [standard format](https://github.com/todotxt/todo.txt) — every line is plain text you can edit with anything else.
-- **TUI and CLI in one binary.** Run `tuxedo` for the interactive UI, or `tuxedo <command>` for a [todo.txt-cli](https://github.com/todotxt/todo.txt-cli)-compatible command line (`add`, `ls`, `do`, `pri`, `archive`, …) — scriptable, with `--json` output and `$TODO_DIR` / `$TODO_FILE` / `$DONE_FILE` support.
+- **Local first, todo.txt friendly.** Tasks live in a database on your machine; each one is still a [todo.txt](https://github.com/todotxt/todo.txt) line at heart, so import, export and editing a todo.txt directly all just work.
+- **TUI and CLI in one binary.** Run `tasq` for the interactive UI, or `tasq <command>` for a [todo.txt-cli](https://github.com/todotxt/todo.txt-cli)-compatible command line (`add`, `ls`, `do`, `pri`, `archive`, …) — scriptable, with `--json` output and `$TODO_DIR` / `$TODO_FILE` / `$DONE_FILE` support.
 - **Natural-language add.** Type prose into the add prompt — `Pay rent monthly on the first, show 3 days before due, project home` — and each recognised phrase lights up as you type, with chips showing what was understood; one Enter saves it as canonical todo.txt. Local, offline, no AI service.
 - **Phone capture.** Press `s` for a QR pointing at a tiny PWA on your machine's LAN — type tasks from your phone and they appear in the list. Captures land in a sibling `inbox.txt` first, so any tool that can append a line (shell, iOS Shortcuts, cron) is also a capture source.
 - **Vim keys, no surprises.** `j` / `k` to move, `dd` to delete, `gg` / `G` to jump, `u` to undo (50 levels), chord prompts (`gg`, `dd`, `fp`, `fc`) with a 600 ms window.
 - **Command palette.** `:` or `Ctrl-P` opens a fuzzy palette over every action — type a few letters, hit Enter. Same matcher as `/` search, ranked so start-of-label hits beat word-boundary hits beat mid-word hits.
-- **Atomic, sync-friendly writes.** Every change goes through write-temp-then-rename. If another process — Dropbox, an editor, a script — modifies the file, tuxedo reloads on the next keypress (or within ~250 ms while idle) and flashes a notice.
-- **Sibling-file archive.** `A` moves completed tasks to `done.txt` next to your file, atomically.
+- **Safe writes, live reload.** Every change is saved at once, in a transaction. If another process — the CLI, the phone capture, a second window — changes your tasks, tasq reloads on the next keypress (or within ~250 ms while idle) and flashes a notice.
+- **Archive.** `A` moves completed tasks to the archive; `a` browses it.
 - **Filter, sort, multi-select.** Cycle by `+project` or `@context`, sort by priority / due / file order, and bulk-complete or bulk-delete in visual mode.
 - **Saved searches.** Name the active `/`-search with `fs`, then recall it any time by cycling saved filters with `ff`. Stored as plain `filter.<name>` lines in the config — hand-editable like everything else.
 - **Five themes, three densities.** Cycle with `T` and `D`. Choices persist across runs and hot-reload when you edit `config.toml` externally.
@@ -193,17 +195,17 @@ design rationale and implementation history of this feature.
 
 ### Custom themes
 
-Beyond the built-ins, tuxedo loads any `*.toml` file you drop in
-`${XDG_CONFIG_HOME:-$HOME/.config}/tuxedo/themes/`. Each one joins the `T`
+Beyond the built-ins, tasq loads any `*.toml` file you drop in
+`${XDG_CONFIG_HOME:-$HOME/.config}/tasq/themes/`. Each one joins the `T`
 picker in sorted filename order. Ready-made themes live in
 [`docs/themes/`](docs/themes) — copy one in and press `T`:
 
 ![catppuccin macchiato](docs/screenshots/theme-catppuccin-macchiato.svg)
 
 ```sh
-mkdir -p ~/.config/tuxedo/themes
-curl -o ~/.config/tuxedo/themes/gruvbox-dark-soft.toml \
-  https://raw.githubusercontent.com/webstonehq/tuxedo/main/docs/themes/gruvbox-dark-soft.toml
+mkdir -p ~/.config/tasq/themes
+curl -o ~/.config/tasq/themes/gruvbox-dark-soft.toml \
+  https://raw.githubusercontent.com/Jfgm299/tasq/main/docs/themes/gruvbox-dark-soft.toml
 ```
 
 <details>
@@ -252,107 +254,85 @@ another theme is skipped with a warning at startup.
 
 ## Install
 
-### Homebrew (macOS, Linux)
+From source (a Homebrew tap is planned):
 
 ```sh
-brew install tuxedo
-```
-
-### Prebuilt binaries
-
-Download the archive for your platform from the [latest release](https://github.com/webstonehq/tuxedo/releases/latest) and put `tuxedo` on your `PATH`.
-
-Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`. Each archive ships with a `.sha256` checksum.
-
-### From source
-
-```sh
-cargo install --git https://github.com/webstonehq/tuxedo
-```
-
-Or clone and build:
-
-```sh
-git clone https://github.com/webstonehq/tuxedo
-cd tuxedo
-cargo build --release
-./target/release/tuxedo [FILE]
+git clone https://github.com/Jfgm299/tasq
+cd tasq
+./install.sh        # or: cargo build --release && ./target/release/tasq
 ```
 
 Requires the Rust 2024 edition (recent stable toolchain).
 
 ## Usage
 
-`tuxedo` is two things in one binary: an interactive TUI, and a one-shot
+`tasq` is two things in one binary: an interactive TUI, and a one-shot
 command line. With no subcommand it launches the TUI; with a recognized
 subcommand it runs the [command line](#command-line-interface) and exits.
 
 ```sh
-tuxedo [FILE]      # launch the TUI on FILE (created if missing)
-tuxedo             # TUI on the default file (see resolution below)
-tuxedo --sample    # open the bundled sample file in the temp dir
-tuxedo <command>   # run a one-shot CLI command — see "Command-line interface"
-tuxedo update      # print upgrade instructions for your install
-tuxedo --help
-tuxedo --version
+tasq               # launch the TUI on your tasks
+tasq FILE.txt      # open a todo.txt file directly instead
+tasq --sample      # open the bundled sample file in the temp dir
+tasq <command>     # run a one-shot CLI command — see "Command-line interface"
+tasq update        # print upgrade instructions for your install
+tasq --help
+tasq --version
 ```
 
-When a newer release is available, the status bar shows `↑ <version> (tuxedo
-update)` next to the version. The check runs in the background, is cached at
-`$XDG_CACHE_HOME/tuxedo/latest_version.json` for 24 h, and fails silently
-when offline. Set `TUXEDO_NO_UPDATE_CHECK=1` to disable.
+### Where your tasks live
 
-### Which file tuxedo opens
+In a SQLite database at `~/.local/share/tasq/tasq.db` (`$XDG_DATA_HOME/tasq`,
+or wherever `$TASQ_DB` points). Each task keeps its todo.txt line plus its
+fields — title, dates, priority, repeat, time, tags — and a stable id.
 
-Both the TUI and the CLI resolve the todo file the same way, in order:
+The first time tasq runs it creates the database and imports the todo.txt it
+finds, looking where todo.txt-cli does:
 
-1. An explicit `FILE` argument (TUI only).
-2. `$TODO_FILE`, if set.
-3. `$TODO_DIR/todo.txt`, if `$TODO_DIR` is set.
-4. `./todo.txt` in the current directory, if it exists.
-5. Otherwise the TUI shows a first-run prompt — press `c` to create
-   `./todo.txt` here, or `s` to open a sample todo.txt in the system temp
-   directory so you can poke around without committing to a path. (The
-   one-shot CLI is non-interactive and uses the sample directly.)
+1. `$TODO_FILE`, if set;
+2. `$TODO_DIR/todo.txt`, if `$TODO_DIR` is set;
+3. `./todo.txt` in the current directory.
 
-The archive file is `$DONE_FILE` if set, otherwise a sibling `done.txt` next
-to the todo file. The file (and any missing parent directories) is created on
-first use. These are the same `TODO_DIR` / `TODO_FILE` / `DONE_FILE` variables
-todo.txt-cli uses, so an existing `todo.cfg` works as-is:
+Its archive comes along too (`$DONE_FILE`, or the sibling `done.txt`). The
+files are only read, never changed. To bring in another file later:
 
 ```sh
-export TODO_DIR="$HOME/Documents/todo"
-export TODO_FILE="$TODO_DIR/todo.txt"
-export DONE_FILE="$TODO_DIR/done.txt"
+tasq import ~/Documents/todo/todo.txt          # + its sibling done.txt
+tasq export > todo.txt                          # live tasks as todo.txt
+tasq export all > everything.txt                # live and archived
 ```
 
-Edits are persisted on every change via atomic write (write `.tmp`, rename).
+Every change is saved at once, in a transaction. If something else changes
+your tasks (the CLI, the phone capture, another tasq window), tasq notices on
+the next keypress, or within ~250 ms while idle, and reloads. The keystroke
+that triggered the reload is consumed — press it again to act on the fresh
+state — and the status bar flashes a notice.
 
-If the file changes on disk (another editor, a sync client, a script),
-tuxedo notices on the next keypress, or within ~250 ms while idle, and
-reloads. The keystroke that triggered the reload is consumed — press it
-again to act on the fresh state — and the status bar flashes a notice.
+Pressing `A` moves every completed task to the archive; `a` toggles the
+archive view so you can browse, un-archive, or permanently delete past tasks.
 
-Pressing `A` appends every completed task to a sibling `done.txt` and
-removes them from the working file (atomically: `done.txt` is written
-before the originals are dropped). `a` toggles the archive view so you
-can browse, un-archive, or permanently delete past tasks.
+### Editing a todo.txt directly
+
+`tasq FILE.txt` (or `--file FILE.txt` for a CLI command) works on that file
+instead of the database, exactly like tuxedo did: plain text, atomic writes
+(write `.tmp`, rename), a sibling `done.txt` as the archive, and reloads when
+another program edits the file.
 
 ## Command-line interface
 
-When the first argument is a recognized subcommand, tuxedo runs a one-shot
+When the first argument is a recognized subcommand, tasq runs a one-shot
 command instead of launching the TUI. The surface mirrors
 [todo.txt-cli](https://github.com/todotxt/todo.txt-cli/wiki/Usage) — same
 commands, aliases, task numbering, and output — so it's a drop-in for scripts
 and aliases.
 
 ```sh
-tuxedo add "Pay rent +home @bank due:2026-07-01"   # or: tuxedo a "..."
-tuxedo ls @bank                                     # filter by context
-tuxedo do 3                                          # mark task 3 complete
-tuxedo pri 3 A                                        # set priority
-tuxedo archive                                        # move done tasks to done.txt
-tuxedo ls --json | jq .                              # machine-readable output
+tasq add "Pay rent +home @bank due:2026-07-01"   # or: tasq a "..."
+tasq ls @bank                                     # filter by context
+tasq do 3                                          # mark task 3 complete
+tasq pri 3 A                                        # set priority
+tasq archive                                        # move done tasks to the archive
+tasq ls --json | jq .                              # machine-readable output
 ```
 
 | Command | Aliases | Arguments | Description |
@@ -367,34 +347,37 @@ tuxedo ls --json | jq .                              # machine-readable output
 | `del` | `rm` | `N [TERM]` | Delete task `N`, or remove just `TERM` from it. Prompts unless `-f`. |
 | `archive` | | | Move completed tasks to the done file. |
 | `list` | `ls` | `[TERM...]` | List tasks. `TERM` is `+project`, `@context`, or free text. |
-| `listall` | `lsa` | `[TERM...]` | List the todo file and the done file. |
+| `listall` | `lsa` | `[TERM...]` | List tasks and archived tasks. |
 | `listpri` | `lsp` | `[PRIORITY]` | List prioritized tasks (optionally a single priority). |
 | `listproj` | `lsprj` | | List all `+projects`. |
 | `listcon` | `lsc` | | List all `@contexts`. |
+| `import` | | `TODO.TXT [DONE.TXT]` | Add a todo.txt's tasks to the database, and its `done.txt`'s (the sibling one if none is named) as archived. |
+| `export` | | `[archive \| all]` | Print the live tasks (or the archive, or both) as todo.txt lines. |
 
-**Task numbers** are 1-based line numbers in the file, exactly as printed by
+**Task numbers** are 1-based positions in the list, exactly as printed by
 `list` — stable regardless of how the list is filtered or sorted. `list`
-sorts by the full line (case-insensitive) and prints a `TODO: X of Y tasks
-shown` footer, matching todo.txt-cli.
+sorts by the full line (case-insensitive) and prints a `TASQ: X of Y tasks
+shown` footer, like todo.txt-cli.
 
 **Options:**
 
 - `-f`, `--force` — skip confirmation prompts (e.g. for `del`).
+- `--file PATH` — work on that todo.txt instead of the database.
 - `--json` — emit machine-readable JSON instead of text. `list`-style commands
   print an array of task objects; mutating commands print a result object.
   No prompts or footers are written in this mode.
 
-Global flags may appear before the subcommand (`tuxedo -f del 3`).
+Global flags may appear before the subcommand (`tasq -f del 3`).
 
 **Differences from todo.txt-cli:** `do` marks a task complete but does **not**
-auto-archive it — completed tasks stay in the file until you run `archive` (or
-press `A` in the TUI), matching tuxedo's interactive model. There is no `-d`
-config-file flag; configure paths with the environment variables above.
+auto-archive it — completed tasks stay in the list until you run `archive` (or
+press `A` in the TUI), matching tasq's interactive model. There is no `-d`
+config-file flag.
 
 ## Keybindings
 
 Custom normal-mode keybindings can be added in
-`${XDG_CONFIG_HOME:-$HOME/.config}/tuxedo/keybinds.toml`:
+`${XDG_CONFIG_HOME:-$HOME/.config}/tasq/keybinds.toml`:
 
 The block below lists every rebindable action with the key it ships with —
 copy it, then change the keys you care about and delete the rest (anything you
@@ -565,7 +548,7 @@ The modal keys below apply in Normal mode:
 | `yy` / `yb` (in visual) | copy selected lines / bodies |
 | `l` | list (default) view |
 | `a` | toggle archive view |
-| `A` | archive completed tasks → `done.txt` |
+| `A` | archive completed tasks |
 | `H` | toggle showing done tasks in the main list |
 | `o` | open the current task's existing `note:<path>` in `$VISUAL` / `$EDITOR` |
 | `O` | create the current task's note if needed, then open it |
@@ -628,7 +611,7 @@ Standard [todo.txt](https://github.com/todotxt/todo.txt) lines:
   (business days), `w` (weeks), and `m` (months). Only the first `due:` term
   in a search is used this way; the rest of the query is matched as free text
   against the task body, same as before
-- `rec:[+]N{d,b,w,m,y}` — recurrence; on completion (`x`), tuxedo inserts
+- `rec:[+]N{d,b,w,m,y}` — recurrence; on completion (`x`), tasq inserts
   a fresh copy of the task with `due:` advanced by `N` days, business
   days (Mon–Fri), weeks, months, or years. The `+` prefix means
   *strict* recurrence anchored to the previous due date (e.g.
@@ -679,7 +662,7 @@ Recognized vocabulary:
 - **Priority** — `high priority` → A, `medium priority` → B, `low priority` → C, or `priority A`.
 
 Parsing is rule-based and runs locally — no network calls, no API key. If
-the buffer already contains a `due:`, `rec:`, or `t:` token, tuxedo assumes
+the buffer already contains a `due:`, `rec:`, or `t:` token, tasq assumes
 you've typed canonical form and saves it directly on the first Enter.
 
 ## Phone capture
@@ -689,23 +672,24 @@ display a QR code for it. Scan it from your phone — any modern browser — to
 get a minimal PWA you can install to your home screen. Type a task, tap
 Add, and within a tick it shows up in your task list.
 
-Captures never touch `todo.txt` directly. They land in a sibling
-`inbox.txt`, which tuxedo drains on every external-change poll: each line
-is run through the same natural-language pipeline as the `n` add prompt,
-given a creation date if missing, and merged into `todo.txt` as a single
-undoable batch (`u` rolls back the whole drain at once).
+Captures never touch your tasks directly. They land in an `inbox.txt` next
+to the database (`~/.local/share/tasq/inbox.txt`; next to the file when you
+open a todo.txt), which tasq drains on every external-change poll: each
+line is run through the same natural-language pipeline as the `n` add
+prompt, given a creation date if missing, and added as a single undoable
+batch (`u` rolls back the whole drain at once).
 
 That makes `inbox.txt` a general capture endpoint, not just a PWA backend.
 Anything that can append a line works as a producer:
 
 ```sh
-echo "Refill prescription tomorrow" >> ~/notes/inbox.txt
-echo "Call dentist due:2026-06-01" >> ~/notes/inbox.txt
+echo "Refill prescription tomorrow" >> ~/.local/share/tasq/inbox.txt
+echo "Call dentist due:2026-06-01" >> ~/.local/share/tasq/inbox.txt
 ```
 
 Shell aliases, iOS Shortcuts writing to a synced folder, cron jobs,
 email-to-file gateways — pick your producer. As long as it appends a line
-to the sibling `inbox.txt`, tuxedo picks it up.
+to that `inbox.txt`, tasq picks it up.
 
 The server:
 
@@ -722,7 +706,7 @@ The server:
   WiFi anyone passive-sniffing can recover the token. To rotate, delete
   `share_token` from `config.toml` and press `s` again.
 
-Drains from tuxedo-managed producers are crash-safe: the capture server
+Drains from tasq-managed producers are crash-safe: the capture server
 holds the same advisory lock as the TUI's rename-and-merge, and any
 staging file left over from an interrupted drain is replayed on the
 next session. Plain shell appends are useful for lightweight capture,
@@ -731,7 +715,7 @@ if a producer must be serialized with the TUI drain.
 
 ## Configuration
 
-Persisted to `${XDG_CONFIG_HOME:-$HOME/.config}/tuxedo/config.toml`. Cycling
+Persisted to `${XDG_CONFIG_HOME:-$HOME/.config}/tasq/config.toml`. Cycling
 theme, density, or sort, and toggling sidebars / line-numbers / done-visibility
 all update the file. Unknown keys are ignored, so older binaries don't break
 on newer files.
@@ -754,8 +738,8 @@ round-trip as plain text, so you can add, rename, or delete them by editing
 `<name>` may not contain `=`.
 
 Task-note actions resolve relative `note:<path>` tokens under `notes_dir`.
-If `notes_dir` is not set, tuxedo falls back to `$NOTES_DIR` and then
-`~/notes`. `O` creates missing notes under `projects/tuxedo-tasks/` using a
+If `notes_dir` is not set, tasq falls back to `$NOTES_DIR` and then
+`~/notes`. `O` creates missing notes under `projects/tasq-tasks/` using a
 small Markdown template and appends the generated `note:<path>` token to the
 task; `o` only opens an existing linked note.
 
@@ -818,11 +802,11 @@ plain `cargo` commands if you don't use [mise](https://mise.jdx.dev/).
 ## Acknowledgments
 
 - [todo.txt](http://todotxt.org/) by Gina Trapani — the format that makes a tool like this possible.
-- [ratatui](https://ratatui.rs/) and [crossterm](https://github.com/crossterm-rs/crossterm) — the rendering and terminal-input crates tuxedo is built on.
+- [ratatui](https://ratatui.rs/) and [crossterm](https://github.com/crossterm-rs/crossterm) — the rendering and terminal-input crates tasq is built on.
 
 ## Roadmap
 
-See [github.com/webstonehq/tuxedo/issues](https://github.com/webstonehq/tuxedo/issues).
+The plan, release by release, is in [`DESIGN.md`](DESIGN.md#7-releases).
 
 ## Contributing
 

@@ -2,7 +2,7 @@
 source: tests/snapshots.rs
 expression: buffer_to_text(&buf)
 ---
- FILTERS                   ▶▮◀ /tmp/tuxedo-snapshot.txt  •  15 tas DETAIL                           
+ FILTERS                   ▶▮◀ /tmp/tasq-snapshot.txt  •  15 tasks DETAIL                           
                                                                                                     
  PROJECTS                  (1)  TODAY  ─────────────────────────── priority  (A)                    
    +work             4      1 ▸ (A) Finish Q2 board deck +work @la created   2026-05-01             
@@ -33,4 +33,4 @@ expression: buffer_to_text(&buf)
                                                                                                     
                                                                                                     
                                                                                                     
- NORMAL · sort: due   j/k · n new · r reschedule · x done · *15 open · 2026-05-06 · tuxedo 2026.8.1
+ NORMAL · sort: due   j/k · n new · r reschedule · x done · * 15 open · 2026-05-06 · tasq 2026.10.0

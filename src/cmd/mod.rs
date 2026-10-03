@@ -93,7 +93,7 @@ pub fn run(argv: &[String]) -> Result<Option<i32>> {
     let args = match parse_args(&rest) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("tuxedo: {e}");
+            eprintln!("tasq: {e}");
             return Ok(Some(2));
         }
     };
@@ -116,7 +116,7 @@ pub fn run(argv: &[String]) -> Result<Option<i32>> {
             let opened = crate::cli::open_database(today).context("opening the tasq database")?;
             if let Some(i) = &opened.imported {
                 eprintln!(
-                    "tuxedo: imported {} tasks ({} archived) from {}",
+                    "tasq: imported {} tasks ({} archived) from {}",
                     i.live,
                     i.archived,
                     i.from.display()
@@ -147,7 +147,7 @@ pub fn run(argv: &[String]) -> Result<Option<i32>> {
         "import" => cmd_import(&mut store, pos),
         "export" => cmd_export(&store, pos),
         other => {
-            eprintln!("tuxedo: unknown command: {other}");
+            eprintln!("tasq: unknown command: {other}");
             2
         }
     };
@@ -157,12 +157,12 @@ pub fn run(argv: &[String]) -> Result<Option<i32>> {
 // ----- helpers -----------------------------------------------------------
 
 fn err(msg: impl std::fmt::Display) -> i32 {
-    eprintln!("tuxedo: {msg}");
+    eprintln!("tasq: {msg}");
     1
 }
 
 fn usage(msg: impl std::fmt::Display) -> i32 {
-    eprintln!("usage: tuxedo {msg}");
+    eprintln!("usage: tasq {msg}");
     2
 }
 
@@ -206,7 +206,7 @@ fn store_error(json: bool, action: &str, e: impl std::fmt::Display) -> i32 {
         s.push('}');
         eprintln!("{s}");
     } else {
-        eprintln!("tuxedo: {e}");
+        eprintln!("tasq: {e}");
     }
     1
 }
@@ -470,7 +470,7 @@ fn cmd_done(store: &mut Store, pos: &[String], json: bool) -> i32 {
             // todo.sh format for the completion itself.
             println!("{n} {}", t.raw);
             println!("{prefix}: {n} marked as done.");
-            // Recurrence is a tuxedo feature todo.sh lacks; surface the spawned
+            // Recurrence is a tasq feature todo.sh lacks; surface the spawned
             // next instance as a freshly-added task in the same idiom.
             if let Some((nn, nt)) = next {
                 println!("{nn} {}", nt.raw);

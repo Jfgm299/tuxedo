@@ -2,7 +2,7 @@
 source: tests/snapshots.rs
 expression: buffer_to_text(&buf)
 ---
- FILTERS                   ▶▮◀ /tmp/tuxedo-snapshot.txt  •  0 task DETAIL                           
+ FILTERS                   ▶▮◀ /tmp/tasq-snapshot.txt  •  0 tasks  DETAIL                           
                                                                                                     
  PROJECTS                                                          (no task)                        
    tag with +project                                                                                
@@ -10,7 +10,7 @@ expression: buffer_to_text(&buf)
  CONTEXTS                                                                                           
    tag with @context                                                                                
                                                                                                     
-                      ╭ tuxedo · welcome ────────────────────────────────────╮                      
+                      ╭ tasq · welcome ──────────────────────────────────────╮                      
                       │                    ██          ██                    │                      
                       │                    ████  ██  ████                    │                      
                       │                    ██████████████                    │                      
@@ -33,4 +33,4 @@ expression: buffer_to_text(&buf)
                                                                                                     
                                                                                                     
                                                                                                     
- WELCOME   c create ./todo.txt · s open sample · q quit       0 open · 2026-05-06 · tuxedo 2026.8.1
+ WELCOME   c create ./todo.txt · s open sample · q quit        0 open · 2026-05-06 · tasq 2026.10.0

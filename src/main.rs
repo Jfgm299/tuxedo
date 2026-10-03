@@ -10,19 +10,19 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 
 use std::io::Write;
 
-use tuxedo::action::{Action, RecAction};
-use tuxedo::app::{
+use tasq::action::{Action, RecAction};
+use tasq::app::{
     AddOutcome, App, CalendarTarget, DialogInputMode, EditorKey, Mode, NormalOutcome,
     NoteCommandResult, NoteEditorMode, NoteEditorState, NotesEntryAction, OverlayKind,
     PaletteDispatch, UNSAVED_WARNING, View,
 };
-use tuxedo::cli;
-use tuxedo::config::Config;
-use tuxedo::config_watcher;
-use tuxedo::keybinds::{KeyBindings, ResolvedKey};
-use tuxedo::theme;
-use tuxedo::ui::hyperlinks;
-use tuxedo::{clipboard, todo, ui, update};
+use tasq::cli;
+use tasq::config::Config;
+use tasq::config_watcher;
+use tasq::keybinds::{KeyBindings, ResolvedKey};
+use tasq::theme;
+use tasq::ui::hyperlinks;
+use tasq::{clipboard, todo, ui, update};
 
 const EVENT_POLL: Duration = Duration::from_millis(250);
 
@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     // A recognized subcommand (possibly preceded by `-f`/`--json`) runs the
     // one-shot CLI and exits; otherwise we fall through to the TUI.
-    if let Some(code) = tuxedo::cmd::run(&argv)? {
+    if let Some(code) = tasq::cmd::run(&argv)? {
         std::process::exit(code);
     }
     let arg = argv.first().cloned();
@@ -42,7 +42,7 @@ fn main() -> Result<()> {
             return Ok(());
         }
         Some("--version") | Some("-V") => {
-            println!("tuxedo {}", env!("CARGO_PKG_VERSION"));
+            println!("tasq {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         Some("update") => {
@@ -51,14 +51,16 @@ fn main() -> Result<()> {
         }
         Some("--sample") => Some(cli::sample_path()?),
         Some(s) if s.starts_with('-') => {
-            eprintln!("tuxedo: unknown option: {s}");
-            eprintln!("try `tuxedo --help`");
+            eprintln!("tasq: unknown option: {s}");
+            eprintln!("try `tasq --help`");
             std::process::exit(2);
         }
         Some(p) => Some(cli::ensure_file(std::path::PathBuf::from(p))?),
         None => None,
     };
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    // tuxedo's settings come along on the first run after the rename.
+    tasq::xdg::migrate_config_from_tuxedo();
     let cfg = Config::load();
     let keybinds = KeyBindings::load();
     // Load user-supplied themes before constructing App, so the theme named
@@ -117,25 +119,31 @@ fn main() -> Result<()> {
         0 => {}
         1 => app_state.flash(theme_warnings.into_iter().next().expect("len==1")),
         n => app_state.flash(format!(
-            "{n} theme(s) skipped — check ~/.config/tuxedo/themes/"
+            "{n} theme(s) skipped — check ~/.config/tasq/themes/"
         )),
     }
-    if std::env::var_os("TUXEDO_NO_UPDATE_CHECK").is_none() {
+    if std::env::var_os("TASQ_NO_UPDATE_CHECK").is_none()
+        && std::env::var_os("TUXEDO_NO_UPDATE_CHECK").is_none()
+    {
         app_state.set_update_check(update::spawn_check());
     }
 
     let terminal = ratatui::init();
     enable_bracketed_paste();
-    // Give the window/tab a consistent `tuxedo <path>` title across terminals
+    // Give the window/tab a consistent `tasq <path>` title across terminals
     // and operating systems, shortening long paths to fit a fixed budget.
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    let title = ui::title::terminal_title(&path, home.as_deref(), ui::title::DEFAULT_BUDGET);
+    let title = if app_state.is_db() {
+        "tasq".to_string()
+    } else {
+        ui::title::terminal_title(&path, home.as_deref(), ui::title::DEFAULT_BUDGET)
+    };
     let _ = crossterm::execute!(io::stdout(), crossterm::terminal::SetTitle(title));
     let result = run(terminal, &mut app_state, &keybinds, config_rx);
     disable_bracketed_paste();
     ratatui::restore();
     // Clear the title on exit so the shell retitles on its next prompt rather
-    // than leaving `tuxedo …` behind.
+    // than leaving `tasq …` behind.
     let _ = crossterm::execute!(io::stdout(), crossterm::terminal::SetTitle(""));
     // Print the file path *after* restoring the terminal so the message
     // survives in the user's scrollback rather than being eaten by the
@@ -143,25 +151,26 @@ fn main() -> Result<()> {
     // rebound to the sample. Skip the line if the user quit the welcome
     // prompt without choosing — no file was opened.
     if app_state.mode != Mode::Welcome {
-        eprintln!("tuxedo: {}", app_state.file_path.display());
+        eprintln!("tasq: {}", app_state.file_path.display());
     }
     result
 }
 
 fn print_usage() {
-    println!("usage: tuxedo [FILE]                 launch the TUI");
-    println!("       tuxedo <command> [args]       run a one-shot command");
-    println!("       tuxedo update");
+    println!("usage: tasq                        launch the TUI on your tasks");
+    println!("       tasq FILE.txt               open a todo.txt file instead");
+    println!("       tasq <command> [args]       run a one-shot command");
+    println!("       tasq update");
     println!();
-    println!("Without FILE or a command, opens ./todo.txt if present; otherwise");
-    println!("prompts to create ./todo.txt here or open a sample todo.txt, in");
-    println!("the interactive TUI.");
+    println!("Your tasks live in a local database (~/.local/share/tasq/tasq.db).");
+    println!("The first run imports the todo.txt found via $TODO_FILE, $TODO_DIR");
+    println!("or ./todo.txt (and its done.txt); the files are left untouched.");
     println!();
     println!("Inside the TUI, press `s` to expose a phone-friendly capture");
     println!("endpoint on your LAN and show a QR code for it. Captures land");
-    println!("in a sibling inbox.txt that the TUI merges on the next poll.");
+    println!("in an inbox.txt next to the database, merged on the next poll.");
     println!();
-    println!("Commands (task numbers are 1-based file lines, as shown by `list`):");
+    println!("Commands (task numbers as shown by `list`):");
     println!("  add, a TEXT...            add a task (natural-language dates supported)");
     println!("  append, app N TEXT...     append text to task N");
     println!("  prepend, prep N TEXT...   prepend text to task N");
@@ -170,25 +179,29 @@ fn print_usage() {
     println!("  depri, dp N...            remove priority from task N");
     println!("  done, do N...             mark task N complete");
     println!("  del, rm N [TERM]          delete task N (prompts; -f to force), or remove TERM");
-    println!("  archive                   move completed tasks to done.txt");
+    println!("  archive                   move completed tasks to the archive");
     println!("  list, ls [TERM...]        list tasks (TERM: +project @context or text)");
-    println!("  listall, lsa [TERM...]    list todo.txt and done.txt");
+    println!("  listall, lsa [TERM...]    list tasks and archived ones");
     println!("  listpri, lsp [PRIORITY]   list prioritized tasks");
     println!("  listproj, lsprj           list +projects");
     println!("  listcon, lsc              list @contexts");
-    println!("  update                    print instructions for upgrading tuxedo");
+    println!("  import TODO.TXT [DONE]    add a todo.txt's tasks (and its done.txt's)");
+    println!("  export [archive | all]    print tasks as todo.txt lines");
+    println!("  update                    print instructions for upgrading tasq");
     println!();
     println!("Options:");
     println!("  -f, --force      skip confirmation prompts (e.g. for del)");
     println!("      --json       machine-readable output for the commands above");
+    println!("      --file PATH  run a command on a todo.txt instead of the database");
     println!("  -h, --help       show this message and exit");
     println!("  -V, --version    print version and exit");
     println!("      --sample     open the sample todo.txt in the TUI");
     println!();
     println!("Environment:");
-    println!("  TODO_DIR     directory holding todo.txt / done.txt");
-    println!("  TODO_FILE    path to the todo file (default $TODO_DIR/todo.txt)");
-    println!("  DONE_FILE    path to the archive file (default sibling done.txt)");
+    println!("  TASQ_DB      path to the database");
+    println!("  TODO_DIR     where a first run looks for todo.txt to import");
+    println!("  TODO_FILE    the todo.txt a first run imports");
+    println!("  DONE_FILE    its archive (default: the sibling done.txt)");
 }
 
 fn run(
@@ -1598,7 +1611,7 @@ fn handle_prompt(app: &mut App, key: KeyEvent) {
     }
 }
 
-// `Action` lives in `tuxedo::action` (see `src/action.rs`). Keeping it in the
+// `Action` lives in `tasq::action` (see `src/action.rs`). Keeping it in the
 // library lets the command palette enumerate every variant without pulling
 // main.rs into the dependency graph.
 
@@ -2041,8 +2054,8 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use tuxedo::app::Sort;
-    use tuxedo::config::Config;
+    use tasq::app::Sort;
+    use tasq::config::Config;
 
     fn key(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
@@ -2066,7 +2079,7 @@ mod tests {
 
     fn welcome_app(name: &str) -> (App, std::path::PathBuf) {
         let path = std::env::temp_dir().join(format!(
-            "tuxedo-welcome-{name}-{}-{:?}.txt",
+            "tasq-welcome-{name}-{}-{:?}.txt",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -2100,7 +2113,7 @@ mod tests {
         assert_eq!(app.mode, Mode::Normal);
         assert_ne!(app.file_path, path, "`s` rebinds away from the cwd target");
         assert!(
-            app.file_path.ends_with("tuxedo-sample.txt"),
+            app.file_path.ends_with("tasq-sample.txt"),
             "`s` opens the bundled sample, got {:?}",
             app.file_path
         );
@@ -2205,7 +2218,7 @@ mod tests {
 
     fn build_app() -> App {
         let path = std::env::temp_dir().join(format!(
-            "tuxedo-bindings-{}-{:?}.txt",
+            "tasq-bindings-{}-{:?}.txt",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -2220,7 +2233,7 @@ mod tests {
 
     fn build_app_with_due() -> App {
         let path = std::env::temp_dir().join(format!(
-            "tuxedo-bindings-{}-{:?}.txt",
+            "tasq-bindings-{}-{:?}.txt",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -2612,8 +2625,7 @@ mod tests {
         use std::time::{Duration, Instant};
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("tuxedo-bindings-{}-{}", std::process::id(), n));
+        let dir = std::env::temp_dir().join(format!("tasq-bindings-{}-{}", std::process::id(), n));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create test dir");
         let todo_path = dir.join("todo.txt");
@@ -2778,7 +2790,7 @@ mod tests {
 
     #[test]
     fn rec_builder_hl_changes_value_and_jk_moves_focus() {
-        use tuxedo::app::BuilderField;
+        use tasq::app::BuilderField;
 
         fn code(c: KeyCode) -> KeyEvent {
             KeyEvent::new(c, KeyModifiers::NONE)
@@ -2833,7 +2845,7 @@ mod tests {
 
     #[test]
     fn rec_builder_custom_binding_wins_over_builtin() {
-        use tuxedo::app::BuilderField;
+        use tasq::app::BuilderField;
 
         // `[recurrence]` swaps the built-in meaning of `l`: it should move
         // focus rather than change the value, proving custom bindings are
@@ -2962,7 +2974,7 @@ mod tests {
     #[test]
     fn handle_notes_up_down_moves_cursor_and_esc_returns_to_normal() {
         let mut app = build_app();
-        app.notes_popup = tuxedo::app::NotesPopupState::new(vec![
+        app.notes_popup = tasq::app::NotesPopupState::new(vec![
             std::path::PathBuf::from("a.md"),
             std::path::PathBuf::from("b.md"),
         ]);
@@ -3046,7 +3058,7 @@ mod tests {
         std::fs::write(notes_folder.join("a.md"), "content a").expect("write a.md");
         std::fs::write(notes_folder.join("b.md"), "content b").expect("write b.md");
         let path = std::env::temp_dir().join(format!(
-            "tuxedo-notes-{}-{:?}.txt",
+            "tasq-notes-{}-{:?}.txt",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3064,7 +3076,7 @@ mod tests {
     #[test]
     fn handle_notes_r_key_opens_rename_prompt_prefilled_with_current_name() {
         let mut app = build_app();
-        app.notes_popup = tuxedo::app::NotesPopupState::new(vec![
+        app.notes_popup = tasq::app::NotesPopupState::new(vec![
             std::path::PathBuf::from("foo.md"),
             std::path::PathBuf::from("bar.md"),
         ]);
@@ -3079,7 +3091,7 @@ mod tests {
     #[test]
     fn handle_notes_d_key_opens_delete_confirm_and_n_returns_to_browsing() {
         let mut app = build_app();
-        app.notes_popup = tuxedo::app::NotesPopupState::new(vec![
+        app.notes_popup = tasq::app::NotesPopupState::new(vec![
             std::path::PathBuf::from("foo.md"),
             std::path::PathBuf::from("bar.md"),
         ]);
@@ -3099,7 +3111,7 @@ mod tests {
     #[test]
     fn handle_notes_d_key_on_empty_list_does_not_enter_confirm_state() {
         let mut app = build_app();
-        app.notes_popup = tuxedo::app::NotesPopupState::default();
+        app.notes_popup = tasq::app::NotesPopupState::default();
         app.mode = Mode::Notes;
 
         handle_notes(&mut app, key('d'));
@@ -3111,7 +3123,7 @@ mod tests {
     #[test]
     fn handle_notes_delete_confirm_y_deletes_selected_file_and_refreshes_list() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-delete-{}-{:?}",
+            "tasq-notes-delete-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3133,7 +3145,7 @@ mod tests {
     #[test]
     fn handle_notes_u_key_unlinks_selected_file_into_unlinked_dir() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-unlink-{}-{:?}",
+            "tasq-notes-unlink-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3157,7 +3169,7 @@ mod tests {
     #[test]
     fn handle_notes_rename_prompt_enter_renames_file_via_full_key_routing() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-rename-{}-{:?}",
+            "tasq-notes-rename-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3191,7 +3203,7 @@ mod tests {
     #[test]
     fn handle_notes_e_key_opens_editor_in_normal_submode() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-editor-e-{}-{:?}",
+            "tasq-notes-editor-e-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3215,7 +3227,7 @@ mod tests {
     #[test]
     fn handle_notes_i_key_opens_editor_in_insert_submode() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-editor-i-{}-{:?}",
+            "tasq-notes-editor-i-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3237,7 +3249,7 @@ mod tests {
     #[test]
     fn insert_submode_arrows_home_end_and_delete_move_and_edit() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-editor-arrows-{}-{:?}",
+            "tasq-notes-editor-arrows-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3264,7 +3276,7 @@ mod tests {
     #[test]
     fn question_mark_in_the_notes_list_opens_the_notes_help_page_and_returns() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-help-{}-{:?}",
+            "tasq-notes-help-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3287,7 +3299,7 @@ mod tests {
     #[test]
     fn esc_does_not_close_an_editor_with_unsaved_changes() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-editor-dirty-esc-{}-{:?}",
+            "tasq-notes-editor-dirty-esc-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3312,7 +3324,7 @@ mod tests {
     #[test]
     fn while_editor_is_active_list_keys_do_not_leak_to_the_list() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-editor-noleak-{}-{:?}",
+            "tasq-notes-editor-noleak-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3358,7 +3370,7 @@ mod tests {
     #[test]
     fn two_step_esc_leaves_editor_to_list_then_list_to_mode_normal() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-editor-esc-{}-{:?}",
+            "tasq-notes-editor-esc-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3395,7 +3407,7 @@ mod tests {
     #[test]
     fn esc_from_insert_submode_returns_to_editor_normal_not_the_list() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-editor-insert-esc-{}-{:?}",
+            "tasq-notes-editor-insert-esc-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3433,7 +3445,7 @@ mod tests {
         std::fs::create_dir_all(&notes_folder).expect("create notes folder");
         std::fs::write(notes_folder.join("a.md"), "").expect("write empty a.md");
         let path = std::env::temp_dir().join(format!(
-            "tuxedo-notes-empty-{}-{:?}.txt",
+            "tasq-notes-empty-{}-{:?}.txt",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3451,7 +3463,7 @@ mod tests {
     #[test]
     fn typing_in_insert_submode_edits_the_buffer_via_full_key_routing() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-editor-type-{}-{:?}",
+            "tasq-notes-editor-type-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3484,7 +3496,7 @@ mod tests {
     #[test]
     fn ctrl_s_saves_the_editor_buffer_to_disk_in_either_submode() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-editor-save-{}-{:?}",
+            "tasq-notes-editor-save-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3528,7 +3540,7 @@ mod tests {
     #[test]
     fn handle_key_z_pins_the_active_editor_and_closes_the_popup() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-basic-{}-{:?}",
+            "tasq-pin-basic-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3571,7 +3583,7 @@ mod tests {
     #[test]
     fn handle_key_z_toggles_focus_off_then_back_on_while_pinned() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-toggle-{}-{:?}",
+            "tasq-pin-toggle-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3600,7 +3612,7 @@ mod tests {
     #[test]
     fn handle_key_shift_z_closes_pin_while_focused() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-close-focused-{}-{:?}",
+            "tasq-pin-close-focused-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3620,7 +3632,7 @@ mod tests {
     #[test]
     fn handle_key_shift_z_closes_pin_while_unfocused() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-close-unfocused-{}-{:?}",
+            "tasq-pin-close-unfocused-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3640,7 +3652,7 @@ mod tests {
     #[test]
     fn while_pinned_focus_true_ordinary_main_list_keys_do_not_leak_to_the_list() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-noleak-{}-{:?}",
+            "tasq-pin-noleak-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3674,7 +3686,7 @@ mod tests {
     #[test]
     fn while_pinned_and_unfocused_ordinary_main_list_keys_work_normally() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-unfocused-works-{}-{:?}",
+            "tasq-pin-unfocused-works-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3706,7 +3718,7 @@ mod tests {
         // routing and checking the same buffer/save behavior the T6+T7
         // floating-editor tests above already proved for the popup path.
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-typing-{}-{:?}",
+            "tasq-pin-typing-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3808,7 +3820,7 @@ mod tests {
     #[test]
     fn handle_key_tab_and_backtab_cycle_pinned_notes_with_three_tabs_wrapping() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-cycle-{}-{:?}",
+            "tasq-pin-cycle-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3848,7 +3860,7 @@ mod tests {
     #[test]
     fn handle_key_tab_is_noop_when_pinned_focus_is_false() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-cycle-unfocused-{}-{:?}",
+            "tasq-pin-cycle-unfocused-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3881,7 +3893,7 @@ mod tests {
         // (editor_mode is Normal) but App::cycle_pinned_note no-ops with
         // fewer than two tabs -- must not panic or change active_pin.
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-cycle-single-{}-{:?}",
+            "tasq-pin-cycle-single-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3902,7 +3914,7 @@ mod tests {
     #[test]
     fn handle_key_shift_z_with_two_pinned_notes_removes_only_the_active_tab() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-close-one-of-two-{}-{:?}",
+            "tasq-pin-close-one-of-two-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3932,7 +3944,7 @@ mod tests {
     #[test]
     fn typing_on_the_active_tab_does_not_touch_the_other_pinned_tab() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-typing-multi-{}-{:?}",
+            "tasq-pin-typing-multi-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3966,7 +3978,7 @@ mod tests {
     #[test]
     fn handle_notes_z_from_plain_list_pins_directly_with_nothing_previously_pinned() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-direct-{}-{:?}",
+            "tasq-pin-direct-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -3991,7 +4003,7 @@ mod tests {
     #[test]
     fn handle_notes_z_from_plain_list_with_something_already_pinned_adds_a_second_tab() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-direct-second-{}-{:?}",
+            "tasq-pin-direct-second-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4033,7 +4045,7 @@ mod tests {
     #[test]
     fn handle_notes_z_on_empty_list_with_existing_pin_is_a_complete_noop() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-pin-direct-empty-noop-{}-{:?}",
+            "tasq-pin-direct-empty-noop-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4042,7 +4054,7 @@ mod tests {
         std::fs::create_dir_all(&notes_folder).expect("create notes folder");
         std::fs::write(notes_folder.join("a.md"), "content a").expect("write a.md");
         let path = std::env::temp_dir().join(format!(
-            "tuxedo-pin-direct-empty-noop-todo-{}-{:?}.txt",
+            "tasq-pin-direct-empty-noop-todo-{}-{:?}.txt",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4108,7 +4120,7 @@ mod tests {
     #[test]
     fn colon_in_editor_normal_submode_opens_an_empty_command_prompt() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-cmd-open-{}-{:?}",
+            "tasq-cmd-open-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4128,7 +4140,7 @@ mod tests {
     #[test]
     fn command_prompt_typing_appends_backspace_removes_and_esc_cancels_without_side_effects() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-cmd-edit-cancel-{}-{:?}",
+            "tasq-cmd-edit-cancel-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4175,7 +4187,7 @@ mod tests {
     #[test]
     fn command_prompt_w_enter_saves_and_returns_to_normal_with_no_close_signal() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-cmd-w-{}-{:?}",
+            "tasq-cmd-w-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4212,7 +4224,7 @@ mod tests {
     #[test]
     fn command_prompt_q_enter_closes_the_floating_editor_back_to_the_list() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-cmd-q-floating-{}-{:?}",
+            "tasq-cmd-q-floating-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4242,7 +4254,7 @@ mod tests {
     #[test]
     fn command_prompt_q_enter_on_a_pinned_tab_closes_the_tab_not_just_unfocus() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-cmd-q-pinned-{}-{:?}",
+            "tasq-cmd-q-pinned-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4278,7 +4290,7 @@ mod tests {
         for cmd in ["wq", "x"] {
             // Floating context.
             let dir = std::env::temp_dir().join(format!(
-                "tuxedo-cmd-{cmd}-floating-{}-{:?}",
+                "tasq-cmd-{cmd}-floating-{}-{:?}",
                 std::process::id(),
                 std::thread::current().id()
             ));
@@ -4310,7 +4322,7 @@ mod tests {
 
             // Pinned context.
             let dir = std::env::temp_dir().join(format!(
-                "tuxedo-cmd-{cmd}-pinned-{}-{:?}",
+                "tasq-cmd-{cmd}-pinned-{}-{:?}",
                 std::process::id(),
                 std::thread::current().id()
             ));
@@ -4350,7 +4362,7 @@ mod tests {
         // proving `:wq` does not close the editor and silently discard the
         // edit when the save itself failed.
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-cmd-wq-fail-{}-{:?}",
+            "tasq-cmd-wq-fail-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4358,7 +4370,7 @@ mod tests {
         let notes_folder = dir.join("tasks").join("abc123");
         std::fs::create_dir_all(notes_folder.join("a.md")).expect("a.md as a directory");
         let path = std::env::temp_dir().join(format!(
-            "tuxedo-cmd-wq-fail-todo-{}-{:?}.txt",
+            "tasq-cmd-wq-fail-todo-{}-{:?}.txt",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4396,7 +4408,7 @@ mod tests {
     #[test]
     fn command_prompt_unknown_command_flashes_error_and_stays_open() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-cmd-unknown-{}-{:?}",
+            "tasq-cmd-unknown-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4420,7 +4432,7 @@ mod tests {
     #[test]
     fn command_prompt_empty_enter_flashes_an_error_instead_of_a_silent_noop() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-cmd-empty-{}-{:?}",
+            "tasq-cmd-empty-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4443,7 +4455,7 @@ mod tests {
     #[test]
     fn a_literal_colon_typed_inside_an_already_open_prompt_is_ordinary_text() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-cmd-literal-colon-{}-{:?}",
+            "tasq-cmd-literal-colon-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4477,7 +4489,7 @@ mod tests {
         // palette while browsing the notes list at all.
         let mut app = build_app();
         app.mode = Mode::Notes;
-        app.notes_popup = tuxedo::app::NotesPopupState::new(vec![std::path::PathBuf::from("a.md")]);
+        app.notes_popup = tasq::app::NotesPopupState::new(vec![std::path::PathBuf::from("a.md")]);
 
         handle_notes(&mut app, ctrl('p'));
 
@@ -4492,7 +4504,7 @@ mod tests {
     #[test]
     fn handle_notes_ctrl_p_is_noop_while_editor_prompt_or_delete_confirm_is_active() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-ctrlp-noop-{}-{:?}",
+            "tasq-notes-ctrlp-noop-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4545,7 +4557,7 @@ mod tests {
         // Regression guard for the noop test above: Ctrl+P must actually work
         // once every sub-state is closed again, not just be silently eaten.
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-ctrlp-works-{}-{:?}",
+            "tasq-notes-ctrlp-works-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4611,7 +4623,7 @@ mod tests {
     fn command_palette_create_note_entry_calls_begin_new_note_prompt_end_to_end() {
         let mut app = build_app();
         app.mode = Mode::Notes;
-        app.notes_popup = tuxedo::app::NotesPopupState::new(vec![std::path::PathBuf::from("a.md")]);
+        app.notes_popup = tasq::app::NotesPopupState::new(vec![std::path::PathBuf::from("a.md")]);
 
         handle_notes(&mut app, ctrl('p'));
         assert_eq!(app.mode, Mode::CommandPalette);
@@ -4640,7 +4652,7 @@ mod tests {
     #[test]
     fn command_palette_delete_note_entry_opens_confirm_not_immediate_delete() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-palette-delete-{}-{:?}",
+            "tasq-notes-palette-delete-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4673,7 +4685,7 @@ mod tests {
     #[test]
     fn command_palette_unlink_note_entry_calls_unlink_selected_note_end_to_end() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-palette-unlink-{}-{:?}",
+            "tasq-notes-palette-unlink-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -4701,7 +4713,7 @@ mod tests {
     #[test]
     fn command_palette_open_note_in_editor_normal_entry_matches_e_key() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-notes-palette-open-editor-{}-{:?}",
+            "tasq-notes-palette-open-editor-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

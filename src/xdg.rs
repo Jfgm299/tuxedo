@@ -15,7 +15,7 @@ pub fn config_home() -> Option<PathBuf> {
             return Some(p);
         }
         eprintln!(
-            "tuxedo: ignoring non-absolute XDG_CONFIG_HOME={:?} (per XDG spec)",
+            "tasq: ignoring non-absolute XDG_CONFIG_HOME={:?} (per XDG spec)",
             p.display()
         );
     }
@@ -36,4 +36,32 @@ pub fn data_home() -> Option<PathBuf> {
     }
     let home = std::env::var_os("HOME")?;
     Some(PathBuf::from(home).join(".local").join("share"))
+}
+
+/// First run after the rename: copy tuxedo's settings (`config.toml`,
+/// `keybinds.toml`, `themes/`) from `~/.config/tuxedo` to `~/.config/tasq`,
+/// unless the latter already exists. Best effort; returns the source when
+/// something was copied.
+pub fn migrate_config_from_tuxedo() -> Option<PathBuf> {
+    let base = config_home()?;
+    let (old, new) = (base.join("tuxedo"), base.join("tasq"));
+    if new.exists() || !old.is_dir() {
+        return None;
+    }
+    copy_dir(&old, &new).ok()?;
+    Some(old)
+}
+
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }

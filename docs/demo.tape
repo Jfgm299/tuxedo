@@ -22,11 +22,11 @@ Set Shell "bash"
 # starts from default prefs, regardless of the user's local config. Hidden so
 # the recording opens directly into the TUI.
 Hide
-Type "rm -rf /tmp/tuxedo-demo-cfg && mkdir -p /tmp/tuxedo-demo-cfg && rm -f /tmp/tuxedo-demo.txt /tmp/tuxedo-demo.done.txt && touch /tmp/tuxedo-demo.txt && export TUXEDO_NO_UPDATE_CHECK=1 XDG_CONFIG_HOME=/tmp/tuxedo-demo-cfg && clear"
+Type "rm -rf /tmp/tasq-demo-cfg && mkdir -p /tmp/tasq-demo-cfg && rm -f /tmp/tasq-demo.txt /tmp/tasq-demo.done.txt && touch /tmp/tasq-demo.txt && export TASQ_NO_UPDATE_CHECK=1 XDG_CONFIG_HOME=/tmp/tasq-demo-cfg && clear"
 Enter
 Show
 
-Type "./target/release/tuxedo /tmp/tuxedo-demo.txt"
+Type "./target/release/tasq /tmp/tasq-demo.txt"
 Enter
 
 # 1. Empty state — bowtie logo + quickstart panel.

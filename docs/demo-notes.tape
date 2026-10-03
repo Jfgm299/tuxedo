@@ -26,10 +26,10 @@ Set Shell "bash"
 # the recording never touches the user's own files. Hidden so the recording
 # opens straight into the TUI.
 Hide
-Type "export D=/tmp/tuxedo-notes-demo TUXEDO_NO_UPDATE_CHECK=1 && rm -rf $D && mkdir -p $D/cfg/tuxedo/themes $D/notes && cp docs/themes/catppuccin-macchiato.toml $D/cfg/tuxedo/themes/ && printf 'theme = Catppuccin Macchiato\nnotes_dir = %s/notes\n' $D > $D/cfg/tuxedo/config.toml && export XDG_CONFIG_HOME=$D/cfg && printf '(A) Call dentist to reschedule cleaning @phone +health\n(A) Finish Q2 board deck +work @laptop\n(B) Review pull requests for auth refactor +work @laptop\n(B) Draft hiring rubric for senior eng +work @laptop\n(B) Renew passport before summer trip +travel @errands\n(C) Order new running shoes +health @errands\nPick up dry cleaning @errands\nSchedule annual physical @phone +health\nPlan Saturday hike with K. @phone +personal\n' > $D/todo.txt && clear"
+Type "export D=/tmp/tasq-notes-demo TASQ_NO_UPDATE_CHECK=1 && rm -rf $D && mkdir -p $D/cfg/tasq/themes $D/notes && cp docs/themes/catppuccin-macchiato.toml $D/cfg/tasq/themes/ && printf 'theme = Catppuccin Macchiato\nnotes_dir = %s/notes\n' $D > $D/cfg/tasq/config.toml && export XDG_CONFIG_HOME=$D/cfg && printf '(A) Call dentist to reschedule cleaning @phone +health\n(A) Finish Q2 board deck +work @laptop\n(B) Review pull requests for auth refactor +work @laptop\n(B) Draft hiring rubric for senior eng +work @laptop\n(B) Renew passport before summer trip +travel @errands\n(C) Order new running shoes +health @errands\nPick up dry cleaning @errands\nSchedule annual physical @phone +health\nPlan Saturday hike with K. @phone +personal\n' > $D/todo.txt && clear"
 Enter
 Sleep 500ms
-Type "./target/release/tuxedo $D/todo.txt"
+Type "./target/release/tasq $D/todo.txt"
 Enter
 Sleep 1500ms
 Show

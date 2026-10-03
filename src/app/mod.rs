@@ -226,6 +226,11 @@ impl App {
         Self::from_store(store, file_path, cfg)
     }
 
+    /// True when the tasks come from the database, not a todo.txt file.
+    pub fn is_db(&self) -> bool {
+        self.store.is_db()
+    }
+
     /// Construct an App on an already-open store (the database).
     pub fn with_store(store: Store, cfg: Config) -> Self {
         let file_path = store.file_path().to_path_buf();
@@ -304,7 +309,7 @@ impl App {
     /// config, reuse them so phone bookmarks survive across sessions.
     /// Otherwise, generate a fresh token, let the OS pick a port, and
     /// write both back to the config. If the persisted port is taken
-    /// (another tuxedo instance on the same machine, say), fall back to
+    /// (another tasq instance on the same machine, say), fall back to
     /// an OS-assigned port and rewrite the config so the next session
     /// starts fresh.
     pub fn ensure_share_started(&mut self) -> Result<&ShareInfo, String> {

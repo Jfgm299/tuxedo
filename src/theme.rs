@@ -223,10 +223,10 @@ pub fn all() -> &'static [&'static Theme] {
     REGISTRY.get_or_init(|| BUILT_IN.to_vec()).as_slice()
 }
 
-/// Resolve `${XDG_CONFIG_HOME:-$HOME/.config}/tuxedo/themes`. Returns None
+/// Resolve `${XDG_CONFIG_HOME:-$HOME/.config}/tasq/themes`. Returns None
 /// only when neither XDG_CONFIG_HOME nor HOME is set.
 pub fn themes_dir() -> Option<PathBuf> {
-    Some(crate::xdg::config_home()?.join("tuxedo").join("themes"))
+    Some(crate::xdg::config_home()?.join("tasq").join("themes"))
 }
 
 /// Read every `*.toml` file in `dir`, parse it as a theme, and return the
@@ -533,7 +533,7 @@ matched = #b58900
 
     fn unique_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "tuxedo-themes-{label}-{}-{:?}",
+            "tasq-themes-{label}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ))

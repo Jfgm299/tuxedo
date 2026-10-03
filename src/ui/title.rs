@@ -1,6 +1,6 @@
 //! Terminal window-title rendering.
 //!
-//! Produces a stable `tuxedo <path>` title so the window/tab title is
+//! Produces a stable `tasq <path>` title so the window/tab title is
 //! consistent across terminals and operating systems, rather than each
 //! terminal inventing its own. The home directory collapses to `~`, and when
 //! the title would exceed a fixed character budget the leading directory
@@ -15,7 +15,7 @@ use std::path::Path;
 /// the pragmatic choice.
 pub const DEFAULT_BUDGET: usize = 64;
 
-const PREFIX: &str = "tuxedo ";
+const PREFIX: &str = "tasq ";
 
 /// Build the terminal title for `path`. `home`, when supplied, collapses to
 /// `~`. The returned string never exceeds `budget` characters unless even a
@@ -117,35 +117,35 @@ mod tests {
             Some(Path::new("/Users/m")),
             DEFAULT_BUDGET,
         );
-        assert_eq!(title, "tuxedo ~/work/todo.txt");
+        assert_eq!(title, "tasq ~/work/todo.txt");
     }
 
     #[test]
     fn collapses_only_as_many_leading_dirs_as_needed() {
-        // Full title is 51 chars; budget 35 forces collapsing through
+        // Full title is 47 chars; budget 30 forces collapsing through
         // `webstonehq` but leaves the deepest dir intact.
         let title = terminal_title(
-            Path::new("/Users/m/projects/github/webstonehq/tuxedo/todo.txt"),
+            Path::new("/Users/m/projects/github/webstonehq/tasq/todo.txt"),
             Some(Path::new("/Users/m")),
-            35,
+            30,
         );
-        assert_eq!(title, "tuxedo ~/p/g/w/tuxedo/todo.txt");
+        assert_eq!(title, "tasq ~/p/g/w/tasq/todo.txt");
     }
 
     #[test]
     fn floor_collapses_all_dirs_but_keeps_filename() {
         let title = terminal_title(
-            Path::new("/Users/m/projects/github/webstonehq/tuxedo/todo.txt"),
+            Path::new("/Users/m/projects/github/webstonehq/tasq/todo.txt"),
             Some(Path::new("/Users/m")),
             10,
         );
-        assert_eq!(title, "tuxedo ~/p/g/w/t/todo.txt");
+        assert_eq!(title, "tasq ~/p/g/w/t/todo.txt");
     }
 
     #[test]
     fn keeps_absolute_path_when_home_is_unknown() {
         let title = terminal_title(Path::new("/Users/m/work/todo.txt"), None, DEFAULT_BUDGET);
-        assert_eq!(title, "tuxedo /Users/m/work/todo.txt");
+        assert_eq!(title, "tasq /Users/m/work/todo.txt");
     }
 
     #[test]
@@ -156,7 +156,7 @@ mod tests {
             Some(Path::new("/Users/m")),
             28,
         );
-        assert_eq!(title, "tuxedo ~/.c/nvim/notes.txt");
+        assert_eq!(title, "tasq ~/.c/nvim/notes.txt");
     }
 
     #[test]
@@ -166,6 +166,6 @@ mod tests {
             Some(Path::new("/Users/m")),
             DEFAULT_BUDGET,
         );
-        assert_eq!(title, "tuxedo notes/todo.txt");
+        assert_eq!(title, "tasq notes/todo.txt");
     }
 }

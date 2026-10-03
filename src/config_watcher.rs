@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn watcher_delivers_changes() {
         let dir = std::env::temp_dir().join(format!(
-            "tuxedo-config-watcher-{}-{:?}",
+            "tasq-config-watcher-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

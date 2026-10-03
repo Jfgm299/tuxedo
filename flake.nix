@@ -25,7 +25,7 @@
         };
       flake = {
         overlays.default = final: _prev: {
-          tuxedo = self.packages.${final.stdenv.hostPlatform.system}.default;
+          tasq = self.packages.${final.stdenv.hostPlatform.system}.default;
         };
       };
     };

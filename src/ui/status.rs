@@ -126,7 +126,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // accent color (the rest of the right text is dim).
     let update_suffix = app
         .update_available()
-        .map(|tag| format!(" · ↑ {tag} (tuxedo update)"));
+        .map(|tag| format!(" · ↑ {tag} (tasq update)"));
     let right_text = right_parts.join(" · ");
 
     // Append a chord indicator (e.g. " g…") so two-key sequences like gg/dd/fp
@@ -263,7 +263,7 @@ mod tests {
 
     fn build_app() -> App {
         let path =
-            std::env::temp_dir().join(format!("tuxedo-status-test-{}.txt", std::process::id()));
+            std::env::temp_dir().join(format!("tasq-status-test-{}.txt", std::process::id()));
         let body = "(A) Buy milk\n".to_string();
         std::fs::write(&path, &body).unwrap();
         App::new(path, body, "2026-05-06".to_string(), Config::default())
@@ -313,10 +313,8 @@ mod tests {
         use crate::app::{NoteEditorMode, NoteEditorState};
 
         let mut app = build_app();
-        let path = std::env::temp_dir().join(format!(
-            "tuxedo-status-pinned-mode-{}.md",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("tasq-status-pinned-mode-{}.md", std::process::id()));
         std::fs::write(&path, "hello").unwrap();
         app.pinned_notes
             .push(NoteEditorState::load(path.clone(), NoteEditorMode::Normal));
@@ -343,7 +341,7 @@ mod tests {
 
         let mut app = build_app();
         let path = std::env::temp_dir().join(format!(
-            "tuxedo-status-note-editor-hint-{}.md",
+            "tasq-status-note-editor-hint-{}.md",
             std::process::id()
         ));
         std::fs::write(&path, "hello").unwrap();

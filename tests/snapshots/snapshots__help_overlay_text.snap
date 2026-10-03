@@ -2,8 +2,8 @@
 source: tests/snapshots.rs
 expression: buffer_to_text(&buf)
 ---
- FILTERS                   ▶▮◀ /tmp/tuxedo-snapshot.txt  •  15 tas DETAIL                           
-     ╭ tuxedo · help · tasks notes (Tab) ─────────────────────────────────────────────────────╮     
+ FILTERS                   ▶▮◀ /tmp/tasq-snapshot.txt  •  15 tasks DETAIL                           
+     ╭ tasq · help · tasks notes (Tab) ───────────────────────────────────────────────────────╮     
  PROJ│  NAVIGATION                                  VIEW                                      │     
    +w│    j / k  (↓ / ↑)    next / previous task      /                 fuzzy search          │     
    +h│    gg / G            first / last task         fp / fc           filter project/context│     
@@ -33,4 +33,4 @@ expression: buffer_to_text(&buf)
      │    +project          project tag(s)            rec:+Nu           strict: anchor on due:│     
      ╰────────────────────────────────────────────────────────────────────────────────────────╯     
                                                                                                     
- HELP   Tab tasks ⇄ notes page · ? close help                15 open · 2026-05-06 · tuxedo 2026.8.1
+ HELP   Tab tasks ⇄ notes page · ? close help                 15 open · 2026-05-06 · tasq 2026.10.0

@@ -2,7 +2,7 @@
 # print-release-asset-downloads.sh — breakdown of GitHub release asset downloads
 set -euo pipefail
 
-REPO="${1:-webstonehq/tuxedo}"
+REPO="${1:-Jfgm299/tasq}"
 
 echo "Download breakdown for $REPO"
 echo "============================================"

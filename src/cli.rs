@@ -20,7 +20,7 @@ pub fn db_path() -> Option<PathBuf> {
     Some(crate::xdg::data_home()?.join("tasq").join("tasq.db"))
 }
 
-/// The todo.txt a first run imports, found the way todo.sh (and tuxedo)
+/// The todo.txt a first run imports, found the way todo.sh (and tasq)
 /// look for it: `$TODO_FILE`, `$TODO_DIR/todo.txt`, then `./todo.txt`.
 /// Only an existing file counts.
 pub fn legacy_todo_path() -> Option<PathBuf> {
@@ -207,7 +207,7 @@ enum TargetDecision {
 /// archived rows don't leak back as duplicates.
 pub fn sample_path() -> io::Result<PathBuf> {
     let dir = std::env::temp_dir();
-    let pb = dir.join("tuxedo-sample.txt");
+    let pb = dir.join("tasq-sample.txt");
     std::fs::write(&pb, sample::TODO_RAW)?;
     match std::fs::remove_file(dir.join("done.txt")) {
         Ok(_) => {}

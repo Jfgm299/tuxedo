@@ -175,7 +175,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .title(Line::from(vec![
             Span::raw(" "),
             Span::styled(
-                "tuxedo",
+                "tasq",
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
@@ -363,8 +363,7 @@ mod tests {
     use crate::config::Config;
 
     fn build_app() -> App {
-        let path =
-            std::env::temp_dir().join(format!("tuxedo-help-test-{}.txt", std::process::id()));
+        let path = std::env::temp_dir().join(format!("tasq-help-test-{}.txt", std::process::id()));
         let body = "(A) Buy milk\n".to_string();
         std::fs::write(&path, &body).unwrap();
         let mut app = App::new(path, body, "2026-05-06".to_string(), Config::default());

@@ -151,10 +151,8 @@ mod tests {
     use crate::config::Config;
 
     fn build_app() -> App {
-        let path = std::env::temp_dir().join(format!(
-            "tuxedo-notes-popup-test-{}.txt",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("tasq-notes-popup-test-{}.txt", std::process::id()));
         let body = "(A) Buy milk\n".to_string();
         std::fs::write(&path, &body).unwrap();
         let mut app = App::new(path, body, "2026-05-06".to_string(), Config::default());

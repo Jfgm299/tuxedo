@@ -1,6 +1,6 @@
 [package]
-name = "tuxedo"
-version = "2026.8.1"
+name = "tasq"
+version = "2026.10.0"
 edition = "2024"
 
 [dependencies]

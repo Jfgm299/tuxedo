@@ -10,7 +10,7 @@ let
 in
 
 rustPlatform.buildRustPackage (finalAttrs: {
-  pname = "tuxedo";
+  pname = "tasq";
   inherit version;
   __structuredAttrs = true;
 
@@ -32,9 +32,9 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   meta = {
     description = "Fast, keyboard-driven terminal UI for todo.txt";
-    homepage = "https://github.com/webstonehq/tuxedo";
-    changelog = "https://github.com/webstonehq/tuxedo/releases/tag/${finalAttrs.src.tag}";
+    homepage = "https://github.com/Jfgm299/tasq";
+    changelog = "https://github.com/Jfgm299/tasq/releases/tag/${finalAttrs.src.tag}";
     license = lib.licenses.mit;
-    mainProgram = "tuxedo";
+    mainProgram = "tasq";
   };
 })

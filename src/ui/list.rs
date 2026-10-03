@@ -21,12 +21,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     .areas(area);
 
     let filter_label = header::filter_label(&app.filter);
+    // The database needs no path in the header; a todo.txt shows which file.
+    let title = if app.store.is_db() {
+        "all tasks".to_string()
+    } else {
+        display_path(&app.file_path)
+    };
     header::render(
         frame,
         header_area,
         theme,
         header::HeaderProps {
-            title: Some(&display_path(&app.file_path)),
+            title: Some(&title),
             // title: None,
             // file: &display_path(&app.file_path),
             count: app.visible_indices().len(),

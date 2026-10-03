@@ -230,7 +230,8 @@ Each release is usable on its own and worth a short video.
 | # | Release | Content |
 | --- | --- | --- |
 | 1 | **Live capture** ✅ | The new-task box with live detection and chips (English), on the current code base. Times are stored as an `at:HH:MM` tag until the new core lands. |
-| 2 | **tasq core** | New name. SQLite storage, the task model above, automatic migration from todo.txt. |
+| 2 | **tasq core** ✅ | New name. SQLite storage with stable ids, automatic migration from todo.txt and the tuxedo settings, import/export. The todo.txt line is still what the app edits, stored next to its fields as columns; notes stay Markdown files for now. |
+| 2b | **Notes and the full model** | Notes in the database (still editable as Markdown and in `$EDITOR`); `planned` vs `due`, `duration`, reminders as real fields instead of tags. |
 | 3 | **Spaces and views** | Home screen, space tree, Today / Upcoming. |
 | 4 | **Routines** | Full recurrence (weekdays, every N, until), week and month views. |
 | 5 | **Calendar, local** | `.ics` feed from your machine, per-space calendars. |
